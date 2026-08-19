@@ -441,6 +441,19 @@ pub async fn list_endpoints(State(state): State<WebState>) -> axum::response::Re
     respond(result)
 }
 
+/// `POST /invoke/custom_kind_counts` — per-CRD instance counts for the
+/// custom-kinds nav badges (P4). No args: the sweep covers every CRD
+/// discovery finds, and each kind that can't be listed (RBAC-denied)
+/// reports 0 rather than failing the call.
+pub async fn custom_kind_counts(State(state): State<WebState>) -> axum::response::Response {
+    let result: AppResult<Vec<k7s_core::kube::CustomKindCount>> = (|| async {
+        let client = core_client(&state.core).await?;
+        k7s_core::kube::custom_kind_counts(&client).await
+    })()
+    .await;
+    respond(result)
+}
+
 pub async fn list_endpoints_for_service(
     State(state): State<WebState>,
     Json(args): Json<ListEndpointsForServiceArgs>,

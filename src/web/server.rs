@@ -274,6 +274,11 @@ pub fn api_router(state: WebState) -> Router {
             "/api/invoke/list_endpoint_addresses",
             post(resource_handlers::list_endpoint_addresses),
         )
+        // Per-CRD instance counts for the custom-kinds nav badges (P4).
+        .route(
+            "/api/invoke/custom_kind_counts",
+            post(resource_handlers::custom_kind_counts),
+        )
         // SBOM endpoints (REST-style).
         .route("/api/sbom/image", post(handlers::sbom_generate_image))
         .route("/api/sbom/history", get(handlers::sbom_list_history))

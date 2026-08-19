@@ -519,5 +519,60 @@ mod tests {
                 json!("this command isn't bridged through the web shell yet")
             );
         }
+
+        /// `custom_kind_counts` must be bridged through the web shell (the P4
+        /// custom-kinds badge). The catch-all answers 501 "this command isn't
+        /// bridged through the web shell yet"; with no cluster connected the
+        /// real handler must answer an ordinary AppError instead — proving the
+        /// route exists and delegates to core.
+        #[tokio::test]
+        async fn custom_kind_counts_is_bridged() {
+            let state = test_state("kind-counts");
+            let app = server::router(
+                state,
+                Some(static_dir("kind-counts")),
+                false,
+                "127.0.0.1:7180".parse().unwrap(),
+            );
+            // Authenticate so require_token lets the invoke through.
+            let resp = app
+                .clone()
+                .oneshot(post_json(
+                    "/api/auth/setup",
+                    None,
+                    json!({"password": "correct-horse-battery"}).to_string(),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::OK);
+            let cookie = set_cookie(&resp);
+
+            // No-arg invoke: the handler takes no Json body (like list_endpoints).
+            let resp = app
+                .clone()
+                .oneshot(post_json(
+                    "/api/invoke/custom_kind_counts",
+                    Some(&cookie),
+                    String::new(),
+                ))
+                .await
+                .unwrap();
+            assert_ne!(
+                resp.status(),
+                StatusCode::NOT_IMPLEMENTED,
+                "custom_kind_counts must be bridged, not 501"
+            );
+            let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+            let body: k7s_deps::serde_json::Value =
+                k7s_deps::serde_json::from_slice(&bytes).unwrap();
+            assert!(
+                body.get("error").is_some(),
+                "no cluster connected — expect an AppError body, got: {body}"
+            );
+            assert_ne!(
+                body["error"],
+                json!("this command isn't bridged through the web shell yet")
+            );
+        }
     }
 }
