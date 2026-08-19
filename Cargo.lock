@@ -1659,8 +1659,8 @@ dependencies = [
 
 [[package]]
 name = "k7s-core"
-version = "0.3.6"
-source = "git+https://github.com/yi-nology/k7s-core.git#7138535065e26317c00ceac33f984251a93352ce"
+version = "0.3.8"
+source = "git+https://github.com/yi-nology/k7s-core.git#86397f362acc4ff81bb9a0e3b07d04e7e6f73005"
 dependencies = [
  "k7s-deps",
  "serde",
