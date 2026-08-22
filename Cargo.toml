@@ -1,48 +1,42 @@
 [package]
 name = "k7s-server"
-version = "0.4.2"
+version.workspace = true
 description = "k7s server — axum HTTP + MCP server for k7s"
-authors = ["k7s"]
-edition = "2021"
-rust-version = "1.77.2"
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
 
 [lib]
 name = "k7s_server"
 crate-type = ["rlib"]
 
 [dependencies]
-# --- Shared dependencies from k7s-deps ---
-k7s-deps = { git = "https://github.com/yi-nology/k7s-deps.git" }
+k7s-deps.workspace = true
+k7s-core.workspace = true
 
-# --- Shared core library ---
-k7s-core = { git = "https://github.com/yi-nology/k7s-core.git" }
-
-# --- Proc-macro dependencies ---
-serde = { version = "1", features = ["derive"] }
-thiserror = "2"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "process", "signal", "sync", "time"] }
+serde.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
 
 # --- Web server ---
-axum = { version = "0.8", optional = true }
-tower = { version = "0.5", optional = true }
-tower-http = { version = "0.6", features = ["cors", "trace", "fs"], optional = true }
-rust-embed = { version = "8", optional = true }
-open = { version = "5", optional = true }
-mime_guess = { version = "2", optional = true }
+axum = { workspace = true, optional = true }
+tower = { workspace = true, optional = true }
+tower-http = { workspace = true, optional = true }
+rust-embed = { workspace = true, optional = true }
+open = { workspace = true, optional = true }
+mime_guess = { workspace = true, optional = true }
 
 # --- MCP server ---
-rmcp = { version = "3", optional = true, features = ["server", "transport-io", "transport-streamable-http-server", "macros"] }
-schemars = { version = "1.0", features = ["chrono04"], optional = true }
+rmcp = { workspace = true, optional = true }
+schemars = { workspace = true, optional = true }
 
 # --- Password gate (web shell auth) ---
-# "std" pulls in rand_core's OsRng (via password-hash/std → rand_core/std →
-# getrandom), which the salt generation in `auth_password.rs` needs.
-argon2 = { version = "0.5", features = ["std"] }
-rustls = { version = "0.23", features = ["ring"] }
+argon2.workspace = true
+rustls.workspace = true
 
 # --- Startup banner ---
-local-ip-address = "0.6"
-hostname = "0.4"
+local-ip-address.workspace = true
+hostname.workspace = true
 
 [features]
 web = ["dep:axum", "dep:tower", "dep:tower-http", "tower-http/fs", "dep:rmcp", "dep:schemars", "rmcp/transport-streamable-http-server", "dep:rust-embed", "dep:open", "dep:mime_guess"]
@@ -57,15 +51,3 @@ required-features = ["web"]
 name = "k7s-mcp"
 path = "src/bin/k7s-mcp.rs"
 required-features = ["mcp"]
-
-[profile.release]
-codegen-units = 1
-lto = true
-opt-level = "s"
-strip = true
-
-# Local development: use sibling checkouts instead of git.
-[patch."https://github.com/yi-nology/k7s-core.git"]
-k7s-core = { path = "../k7s-core" }
-[patch."https://github.com/yi-nology/k7s-deps.git"]
-k7s-deps = { path = "../k7s-deps" }
