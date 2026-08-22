@@ -1,26 +1,18 @@
 # syntax=docker/dockerfile:1.7
 #
-# Multi-stage build for the k7s-web single-binary server.
+# Multi-stage build for the k7s-web single-binary server (monorepo layout).
 #
 # Produces a musl-linked static binary (no glibc dependency).
 # The runtime image is alpine-based (~12 MB total).
 #
-# Expects the build context to contain:
-#   - k7s-server/  (this crate)
-#   - k7s-core/    (path dependency)
-#   - k7s-deps/    (path dependency)
-#   - dist/        (pre-built frontend)
+# Expects the build context to be the repository root:
+#   - Cargo.toml / Cargo.lock   (workspace)
+#   - crates/                   (all workspace members)
+#   - dist/                     (pre-built frontend)
 #
-# Build (from the parent directory containing all repos):
+# Build from the repo root:
 #   docker build -t ghcr.io/yi-nology/k7s:latest \
-#     -f k7s-server/Dockerfile .
-#
-# Multi-arch build:
-#   docker buildx build --platform linux/amd64,linux/arm64 \
-#     -t ghcr.io/yi-nology/k7s:latest \
-#     -f k7s-server/Dockerfile .
-#
-# Or use CI which arranges the directory structure.
+#     -f crates/k7s-server/Dockerfile .
 
 # ─────────────────────────────────────────────────────────────────
 # Stage 1 — front-end (pre-built in CI or local build)
@@ -51,39 +43,35 @@ RUN case "${TARGETARCH}" in \
 
 WORKDIR /src
 
-# Copy dependency manifests first for layer caching.
-COPY k7s-server/Cargo.toml k7s-server/Cargo.lock ./k7s-server/
-COPY k7s-core/Cargo.toml k7s-core/Cargo.lock ./k7s-core/
-COPY k7s-deps/Cargo.toml k7s-deps/Cargo.lock ./k7s-deps/
+# Dependency manifests first for layer caching.
+COPY Cargo.toml Cargo.lock ./
+COPY crates/k7s-deps/Cargo.toml ./crates/k7s-deps/
+COPY crates/k7s-core/Cargo.toml ./crates/k7s-core/
+COPY crates/k7s-commands/Cargo.toml ./crates/k7s-commands/
+COPY crates/k7s-server/Cargo.toml ./crates/k7s-server/
 
 # Stub sources so cargo fetch can resolve the dependency graph.
-# Note: k7s-server has no src/main.rs (bins are in src/bin/), but cargo fetch
-# needs at least one source file to resolve the dependency graph.
-RUN mkdir -p k7s-server/src k7s-core/src k7s-deps/src \
- && echo "fn main() {}" > k7s-server/src/main.rs \
- && echo "pub fn dummy() {}" > k7s-server/src/lib.rs \
- && echo "pub fn dummy() {}" > k7s-core/src/lib.rs \
- && echo "pub fn dummy() {}" > k7s-deps/src/lib.rs \
- && cd k7s-server && cargo fetch
+RUN mkdir -p crates/k7s-deps/src crates/k7s-core/src crates/k7s-commands/src crates/k7s-server/src \
+ && echo "pub fn dummy() {}" > crates/k7s-deps/src/lib.rs \
+ && echo "pub fn dummy() {}" > crates/k7s-core/src/lib.rs \
+ && echo "pub fn dummy() {}" > crates/k7s-commands/src/lib.rs \
+ && echo "pub fn dummy() {}" > crates/k7s-server/src/lib.rs \
+ && echo "fn main() {}" > crates/k7s-server/src/main.rs \
+ && cargo fetch
 
-# Copy real source.
-COPY k7s-server/src ./k7s-server/src
-COPY k7s-core/src ./k7s-core/src
-COPY k7s-deps/src ./k7s-deps/src
-# rust-embed #[folder = "../dist"]] is relative to Cargo.toml (k7s-server/),
+# Real sources.
+COPY crates ./crates
+# rust-embed #[folder = "../../dist"] is relative to crates/k7s-server/,
 # so it looks for /src/dist/ — copy the frontend there.
 COPY dist ./dist
 
-# Determine the correct Rust target triple for the build platform.
-# Build a static musl binary — no glibc dependency at runtime.
+# Static musl build from the workspace root.
 RUN ARCH_TRIPLE=$(case "${TARGETARCH}" in \
           amd64) echo "x86_64-unknown-linux-musl" ;; \
           arm64) echo "aarch64-unknown-linux-musl" ;; \
         esac) \
- && cd k7s-server \
- && cargo build --release \
-      --features web --bin k7s-web \
-      --target "${ARCH_TRIPLE}" \
+ && cargo build --release -p k7s-server --features k7s-server/web \
+      --bin k7s-web --target "${ARCH_TRIPLE}" \
  && cp "target/${ARCH_TRIPLE}/release/k7s-web" /k7s-web
 
 # ─────────────────────────────────────────────────────────────────
