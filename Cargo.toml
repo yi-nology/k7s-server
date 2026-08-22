@@ -14,7 +14,7 @@ crate-type = ["rlib"]
 k7s-deps = { git = "https://github.com/yi-nology/k7s-deps.git" }
 k7s-core = { git = "https://github.com/yi-nology/k7s-core.git" }
 # The shared command registry (web dispatch) — pulls the tauri command surface.
-k7s-commands = { git = "https://github.com/yi-nology/k7s-commands.git", optional = true }
+k7s-commands = { git = "https://github.com/yi-nology/k7s-commands.git", optional = true, default-features = false }
 
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
