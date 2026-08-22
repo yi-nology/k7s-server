@@ -8,6 +8,10 @@ use std::path::Path;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+use argon2::password_hash::{
+    rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString,
+};
+use argon2::Argon2;
 use axum::extract::State;
 use axum::http::header::SET_COOKIE;
 use axum::http::StatusCode;
@@ -15,8 +19,6 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 use k7s_deps::rand::Rng;
 use k7s_deps::serde_json::json;
-use argon2::password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
-use argon2::Argon2;
 
 use super::state::WebState;
 
@@ -37,7 +39,10 @@ impl PasswordAuth {
             .ok()
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty());
-        Self { hash, sessions: Mutex::new(HashMap::new()) }
+        Self {
+            hash,
+            sessions: Mutex::new(HashMap::new()),
+        }
     }
 
     pub fn configured(&self) -> bool {
@@ -80,8 +85,12 @@ impl PasswordAuth {
     /// Constant-time verify (argon2 does the comparison internally).
     pub fn verify(&self, password: &str) -> bool {
         let Some(h) = &self.hash else { return false };
-        let Ok(parsed) = PasswordHash::new(h) else { return false };
-        Argon2::default().verify_password(password.as_bytes(), &parsed).is_ok()
+        let Ok(parsed) = PasswordHash::new(h) else {
+            return false;
+        };
+        Argon2::default()
+            .verify_password(password.as_bytes(), &parsed)
+            .is_ok()
     }
 
     fn issue_session(&self) -> String {
@@ -97,7 +106,9 @@ impl PasswordAuth {
 
     /// 校验 cookie 里的会话 token(滑动续期)。
     pub fn check_session(&self, token: &str) -> bool {
-        let Ok(mut s) = self.sessions.lock() else { return false };
+        let Ok(mut s) = self.sessions.lock() else {
+            return false;
+        };
         match s.get(token) {
             Some(exp) if *exp > Instant::now() => {
                 s.insert(token.to_string(), Instant::now() + SESSION_TTL);
@@ -114,7 +125,10 @@ impl PasswordAuth {
     }
 
     pub fn cookie_of(token: &str) -> String {
-        format!("{SESSION_COOKIE}={token}; Path=/; HttpOnly; SameSite=Strict; Max-Age={}", SESSION_TTL.as_secs())
+        format!(
+            "{SESSION_COOKIE}={token}; Path=/; HttpOnly; SameSite=Strict; Max-Age={}",
+            SESSION_TTL.as_secs()
+        )
     }
 
     pub fn cookie_name() -> &'static str {
@@ -123,7 +137,11 @@ impl PasswordAuth {
 }
 
 fn cookie_token(req: &axum::http::Request<axum::body::Body>) -> Option<String> {
-    let raw = req.headers().get(axum::http::header::COOKIE)?.to_str().ok()?;
+    let raw = req
+        .headers()
+        .get(axum::http::header::COOKIE)?
+        .to_str()
+        .ok()?;
     raw.split(';')
         .map(|c| c.trim())
         .find_map(|c| c.strip_prefix(&format!("{SESSION_COOKIE}=")))
@@ -143,7 +161,10 @@ pub async fn auth_status(
     State(state): State<WebState>,
     req: axum::http::Request<axum::body::Body>,
 ) -> Response {
-    let pa = state.password_auth.lock().unwrap_or_else(|e| e.into_inner());
+    let pa = state
+        .password_auth
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let authenticated = cookie_token(&req)
         .map(|t| pa.check_session(&t))
         .unwrap_or(false);
@@ -159,21 +180,40 @@ pub async fn auth_setup(
     Json(body): Json<k7s_deps::serde_json::Value>,
 ) -> Response {
     let Some(pwd) = body["password"].as_str() else {
-        return (StatusCode::BAD_REQUEST, Json(json!({"ok": false, "error": "password required"}))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"ok": false, "error": "password required"})),
+        )
+            .into_response();
     };
     if pwd.len() < 8 {
-        return (StatusCode::BAD_REQUEST, Json(json!({"ok": false, "error": "password must be >= 8 chars"}))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"ok": false, "error": "password must be >= 8 chars"})),
+        )
+            .into_response();
     }
-    let mut guard = state.password_auth.lock().unwrap_or_else(|e| e.into_inner());
+    let mut guard = state
+        .password_auth
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     if let Err(e) = guard.setup(pwd) {
         return (StatusCode::CONFLICT, Json(json!({"ok": false, "error": e}))).into_response();
     }
     if let Err(e) = guard.persist(&state.data_dir) {
-        return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"ok": false, "error": e.to_string()}))).into_response();
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"ok": false, "error": e.to_string()})),
+        )
+            .into_response();
     }
     let token = guard.issue_session();
     drop(guard);
-    ([(SET_COOKIE, PasswordAuth::cookie_of(&token))], Json(json!({"ok": true}))).into_response()
+    (
+        [(SET_COOKIE, PasswordAuth::cookie_of(&token))],
+        Json(json!({"ok": true})),
+    )
+        .into_response()
 }
 
 pub async fn auth_login(
@@ -181,22 +221,54 @@ pub async fn auth_login(
     Json(body): Json<k7s_deps::serde_json::Value>,
 ) -> Response {
     let Some(pwd) = body["password"].as_str() else {
-        return (StatusCode::BAD_REQUEST, Json(json!({"ok": false, "error": "password required"}))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"ok": false, "error": "password required"})),
+        )
+            .into_response();
     };
-    let guard = state.password_auth.lock().unwrap_or_else(|e| e.into_inner());
+    let guard = state
+        .password_auth
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     if !guard.verify(pwd) {
-        return (StatusCode::UNAUTHORIZED, Json(json!({"ok": false, "error": "wrong password"}))).into_response();
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"ok": false, "error": "wrong password"})),
+        )
+            .into_response();
     }
     let token = guard.issue_session();
     drop(guard);
-    ([(SET_COOKIE, PasswordAuth::cookie_of(&token))], Json(json!({"ok": true}))).into_response()
+    (
+        [(SET_COOKIE, PasswordAuth::cookie_of(&token))],
+        Json(json!({"ok": true})),
+    )
+        .into_response()
 }
 
-pub async fn auth_logout(State(state): State<WebState>, req: axum::http::Request<axum::body::Body>) -> Response {
+pub async fn auth_logout(
+    State(state): State<WebState>,
+    req: axum::http::Request<axum::body::Body>,
+) -> Response {
     if let Some(t) = cookie_token(&req) {
-        state.password_auth.lock().unwrap_or_else(|e| e.into_inner()).drop_session(&t);
+        state
+            .password_auth
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .drop_session(&t);
     }
-    ([(SET_COOKIE, format!("{}=; Path=/; HttpOnly; Max-Age=0", PasswordAuth::cookie_name()))], Json(json!({"ok": true}))).into_response()
+    (
+        [(
+            SET_COOKIE,
+            format!(
+                "{}=; Path=/; HttpOnly; Max-Age=0",
+                PasswordAuth::cookie_name()
+            ),
+        )],
+        Json(json!({"ok": true})),
+    )
+        .into_response()
 }
 
 #[cfg(test)]
@@ -208,7 +280,10 @@ mod tests {
         let dir = std::env::temp_dir().join("k7s-pwd-test");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let mut pa = PasswordAuth { hash: None, sessions: Mutex::new(HashMap::new()) };
+        let mut pa = PasswordAuth {
+            hash: None,
+            sessions: Mutex::new(HashMap::new()),
+        };
         assert!(!pa.configured());
         pa.setup("correct-horse-battery").unwrap();
         assert!(pa.configured());
@@ -222,7 +297,10 @@ mod tests {
 
     #[test]
     fn session_issue_check_drop() {
-        let pa = PasswordAuth { hash: None, sessions: Mutex::new(HashMap::new()) };
+        let pa = PasswordAuth {
+            hash: None,
+            sessions: Mutex::new(HashMap::new()),
+        };
         let t = pa.issue_session();
         assert!(pa.check_session(&t));
         pa.drop_session(&t);
@@ -293,7 +371,9 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(resp.status(), StatusCode::OK);
-            let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+            let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+                .await
+                .unwrap();
             k7s_deps::serde_json::from_slice(&bytes).unwrap()
         }
 
@@ -310,33 +390,52 @@ mod tests {
             // Pre-login: status + static assets are public (login page loads).
             let resp = app
                 .clone()
-                .oneshot(Request::builder().uri("/api/auth/status").body(Body::empty()).unwrap())
+                .oneshot(
+                    Request::builder()
+                        .uri("/api/auth/status")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
                 .await
                 .unwrap();
             assert_eq!(resp.status(), StatusCode::OK);
             // Loopback never gates, even configured and cookie-less — the
             // published-token flow is unchanged.
             let st = status(&app, None).await;
-            assert_eq!(st["authRequired"], json!(false), "loopback must never require auth");
+            assert_eq!(
+                st["authRequired"],
+                json!(false),
+                "loopback must never require auth"
+            );
             let resp = app
                 .clone()
                 .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
                 .await
                 .unwrap();
-            assert_eq!(resp.status(), StatusCode::OK, "static / must be reachable pre-login");
+            assert_eq!(
+                resp.status(),
+                StatusCode::OK,
+                "static / must be reachable pre-login"
+            );
 
             // Setup: too-short password rejected, then accepted with a cookie.
             let resp = app
                 .clone()
-                .oneshot(post_json("/api/auth/setup", None, json!({"password": "short"}).to_string()))
+                .oneshot(post_json(
+                    "/api/auth/setup",
+                    None,
+                    json!({"password": "short"}).to_string(),
+                ))
                 .await
                 .unwrap();
             assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
             let resp = app
                 .clone()
-                .oneshot(
-                    post_json("/api/auth/setup", None, json!({"password": "correct-horse-battery"}).to_string()),
-                )
+                .oneshot(post_json(
+                    "/api/auth/setup",
+                    None,
+                    json!({"password": "correct-horse-battery"}).to_string(),
+                ))
                 .await
                 .unwrap();
             assert_eq!(resp.status(), StatusCode::OK);
@@ -345,14 +444,19 @@ mod tests {
             assert!(cookie.contains("HttpOnly"));
             assert!(cookie.contains("SameSite=Strict"));
             assert!(cookie.contains("Path=/"));
-            assert!(cookie.contains("Max-Age=604800"), "7-day sliding TTL, got: {cookie}");
+            assert!(
+                cookie.contains("Max-Age=604800"),
+                "7-day sliding TTL, got: {cookie}"
+            );
 
             // Second setup is refused (409) — single-user, set once.
             let resp = app
                 .clone()
-                .oneshot(
-                    post_json("/api/auth/setup", None, json!({"password": "another-password"}).to_string()),
-                )
+                .oneshot(post_json(
+                    "/api/auth/setup",
+                    None,
+                    json!({"password": "another-password"}).to_string(),
+                ))
                 .await
                 .unwrap();
             assert_eq!(resp.status(), StatusCode::CONFLICT);
@@ -360,15 +464,21 @@ mod tests {
             // Login: wrong password 401s, correct one issues a fresh cookie.
             let resp = app
                 .clone()
-                .oneshot(post_json("/api/auth/login", None, json!({"password": "nope"}).to_string()))
+                .oneshot(post_json(
+                    "/api/auth/login",
+                    None,
+                    json!({"password": "nope"}).to_string(),
+                ))
                 .await
                 .unwrap();
             assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
             let resp = app
                 .clone()
-                .oneshot(
-                    post_json("/api/auth/login", None, json!({"password": "correct-horse-battery"}).to_string()),
-                )
+                .oneshot(post_json(
+                    "/api/auth/login",
+                    None,
+                    json!({"password": "correct-horse-battery"}).to_string(),
+                ))
                 .await
                 .unwrap();
             assert_eq!(resp.status(), StatusCode::OK);
@@ -379,26 +489,49 @@ mod tests {
             // The session cookie unlocks a protected route (no bearer token).
             let resp = app
                 .clone()
-                .oneshot(post_json("/api/invoke/load_prefs", Some(&cookie_pair), json!({}).to_string()))
+                .oneshot(post_json(
+                    "/api/invoke/load_prefs",
+                    Some(&cookie_pair),
+                    json!({}).to_string(),
+                ))
                 .await
                 .unwrap();
-            assert_ne!(resp.status(), StatusCode::UNAUTHORIZED, "valid session must pass the auth gate");
+            assert_ne!(
+                resp.status(),
+                StatusCode::UNAUTHORIZED,
+                "valid session must pass the auth gate"
+            );
 
             // Logout clears the session; the same cookie no longer works.
             let resp = app
                 .clone()
-                .oneshot(post_json("/api/auth/logout", Some(&cookie_pair), String::new()))
+                .oneshot(post_json(
+                    "/api/auth/logout",
+                    Some(&cookie_pair),
+                    String::new(),
+                ))
                 .await
                 .unwrap();
             assert_eq!(resp.status(), StatusCode::OK);
             let clear = set_cookie(&resp);
-            assert!(clear.starts_with("k7s_session=;"), "logout must clear the cookie, got: {clear}");
+            assert!(
+                clear.starts_with("k7s_session=;"),
+                "logout must clear the cookie, got: {clear}"
+            );
             let resp = app
                 .clone()
-                .oneshot(post_json("/api/invoke/load_prefs", Some(&cookie_pair), json!({}).to_string()))
+                .oneshot(post_json(
+                    "/api/invoke/load_prefs",
+                    Some(&cookie_pair),
+                    json!({}).to_string(),
+                ))
                 .await
                 .unwrap();
-            assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "logged-out session must be rejected");
+            assert_eq!(
+                resp.status(),
+                StatusCode::UNAUTHORIZED,
+                "logged-out session must be rejected"
+            );
         }
 
         #[tokio::test]
@@ -442,13 +575,21 @@ mod tests {
             // the gate while `configured` flips to true.
             let resp = app
                 .clone()
-                .oneshot(post_json("/api/auth/setup", None, json!({"password": "correct-horse-battery"}).to_string()))
+                .oneshot(post_json(
+                    "/api/auth/setup",
+                    None,
+                    json!({"password": "correct-horse-battery"}).to_string(),
+                ))
                 .await
                 .unwrap();
             assert_eq!(resp.status(), StatusCode::OK);
             let pair = set_cookie(&resp).split(';').next().unwrap().to_string();
             let st = status(&app, Some(&pair)).await;
-            assert_eq!(st["authRequired"], json!(false), "valid session must clear the gate");
+            assert_eq!(
+                st["authRequired"],
+                json!(false),
+                "valid session must clear the gate"
+            );
             assert_eq!(st["configured"], json!(true));
 
             // (c) Logout drops the session server-side; the same cookie (the
@@ -461,7 +602,11 @@ mod tests {
                 .unwrap();
             assert_eq!(resp.status(), StatusCode::OK);
             let st = status(&app, Some(&pair)).await;
-            assert_eq!(st["authRequired"], json!(true), "dropped session must re-gate");
+            assert_eq!(
+                st["authRequired"],
+                json!(true),
+                "dropped session must re-gate"
+            );
             assert_eq!(st["configured"], json!(true));
         }
 
@@ -507,7 +652,9 @@ mod tests {
                 StatusCode::NOT_IMPLEMENTED,
                 "apply_yaml_bundle must be bridged, not 501"
             );
-            let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+            let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+                .await
+                .unwrap();
             let body: k7s_deps::serde_json::Value =
                 k7s_deps::serde_json::from_slice(&bytes).unwrap();
             assert!(

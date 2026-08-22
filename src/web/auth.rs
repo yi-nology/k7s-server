@@ -148,7 +148,11 @@ pub async fn require_token(
 /// True when the request carries a live `k7s_session` cookie (sliding-renewal
 /// check lives in [`super::auth_password::PasswordAuth::check_session`]).
 fn cookie_session(req: &Request<Body>, state: &WebState) -> Option<()> {
-    let raw = req.headers().get(k7s_deps::http::header::COOKIE)?.to_str().ok()?;
+    let raw = req
+        .headers()
+        .get(k7s_deps::http::header::COOKIE)?
+        .to_str()
+        .ok()?;
     let name = format!("{}=", super::auth_password::PasswordAuth::cookie_name());
     let token = raw
         .split(';')

@@ -4,10 +4,7 @@
 //! cron scheduler, skills, the streaming chat (`ai_chat`) with its
 //! `WebAiSink` EventSink implementation, polling, and write-tool approval.
 
-use axum::{
-    extract::State,
-    Json,
-};
+use axum::{extract::State, Json};
 
 use super::state::WebState;
 use super::types::respond;
@@ -113,7 +110,12 @@ pub async fn ai_memory_add_handler(
         _ => k7s_core::ai::memory::Tier::LongTerm,
     };
     let mut store = k7s_core::ai::memory::MemoryStore::open(&state.core.data_dir, kube_context);
-    store.add(tier, content, tags, k7s_core::ai::memory::MemorySource::User);
+    store.add(
+        tier,
+        content,
+        tags,
+        k7s_core::ai::memory::MemorySource::User,
+    );
     respond(Ok(k7s_deps::serde_json::json!({"ok": true})))
 }
 
@@ -248,14 +250,15 @@ pub async fn ai_save_config_handler(
         .get("configInput")
         .cloned()
         .unwrap_or(k7s_deps::serde_json::Value::Null);
-    let config: k7s_core::ai::config::AiConfig = match k7s_deps::serde_json::from_value(config_input) {
-        Ok(c) => c,
-        Err(e) => {
-            return respond::<()>(Err(k7s_core::error::AppError::Other(format!(
-                "invalid config: {e}"
-            ))))
-        }
-    };
+    let config: k7s_core::ai::config::AiConfig =
+        match k7s_deps::serde_json::from_value(config_input) {
+            Ok(c) => c,
+            Err(e) => {
+                return respond::<()>(Err(k7s_core::error::AppError::Other(format!(
+                    "invalid config: {e}"
+                ))))
+            }
+        };
     let dir = state.core.data_dir.clone();
     let result = match k7s_deps::tokio::task::spawn_blocking(move || {
         k7s_core::ai::config::save(Some(&dir), &config)
@@ -304,7 +307,9 @@ pub async fn ai_test_connection_handler(State(state): State<WebState>) -> axum::
             Ok(Err(e)) => {
                 return respond::<String>(Err(k7s_core::error::AppError::Other(e.to_string())))
             }
-            Err(e) => return respond::<String>(Err(k7s_core::error::AppError::Other(e.to_string()))),
+            Err(e) => {
+                return respond::<String>(Err(k7s_core::error::AppError::Other(e.to_string())))
+            }
         };
     let cfg = view.config;
     let (base, model, key) = match k7s_core::ai::config::resolve(&cfg, Some(&state.core.data_dir)) {
@@ -325,7 +330,9 @@ pub async fn ai_test_connection_handler(State(state): State<WebState>) -> axum::
             Ok(k7s_core::ai::llm::StreamEvent::TextDelta(t))
             | Ok(k7s_core::ai::llm::StreamEvent::ReasoningDelta(t)) => got.push_str(&t),
             Ok(k7s_core::ai::llm::StreamEvent::Done { .. }) => break,
-            Err(e) => return respond::<String>(Err(k7s_core::error::AppError::Other(e.to_string()))),
+            Err(e) => {
+                return respond::<String>(Err(k7s_core::error::AppError::Other(e.to_string())))
+            }
         }
     }
     respond(Ok(format!("connected (model replied: {:?})", got.trim())))
@@ -420,7 +427,9 @@ pub async fn ai_chat_handler(
             Ok(Err(e)) => {
                 return respond::<String>(Err(k7s_core::error::AppError::Other(e.to_string())))
             }
-            Err(e) => return respond::<String>(Err(k7s_core::error::AppError::Other(e.to_string()))),
+            Err(e) => {
+                return respond::<String>(Err(k7s_core::error::AppError::Other(e.to_string())))
+            }
         };
     let cfg = view.config;
     let data_dir = state.core.data_dir.clone();
@@ -448,15 +457,16 @@ pub async fn ai_chat_handler(
     let run_id = k7s_deps::uuid::Uuid::new_v4().to_string();
     let temperature = cfg.provider.temperature;
 
-    let llm_factory: std::sync::Arc<dyn Fn() -> Box<dyn k7s_core::ai::llm::LlmClient> + Send + Sync> =
-        std::sync::Arc::new(move || {
-            Box::new(k7s_core::ai::llm::OpenAiClient::new(
-                base.clone(),
-                model.clone(),
-                key.clone(),
-                temperature,
-            ))
-        });
+    let llm_factory: std::sync::Arc<
+        dyn Fn() -> Box<dyn k7s_core::ai::llm::LlmClient> + Send + Sync,
+    > = std::sync::Arc::new(move || {
+        Box::new(k7s_core::ai::llm::OpenAiClient::new(
+            base.clone(),
+            model.clone(),
+            key.clone(),
+            temperature,
+        ))
+    });
 
     let agent =
         k7s_core::ai::agent::AgentLoop::new(k7s_core::ai::tools::ToolRegistry::new(), llm_factory);

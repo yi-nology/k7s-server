@@ -183,7 +183,10 @@ pub fn api_router(state: WebState) -> Router {
             post(ai_handlers::ai_save_config_handler),
         )
         .route("/api/invoke/ai_chat", post(ai_handlers::ai_chat_handler))
-        .route("/api/invoke/ai_cancel", post(ai_handlers::ai_cancel_handler))
+        .route(
+            "/api/invoke/ai_cancel",
+            post(ai_handlers::ai_cancel_handler),
+        )
         .route(
             "/api/invoke/ai_poll_events",
             post(ai_handlers::ai_poll_events_handler),

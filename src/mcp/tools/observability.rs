@@ -10,7 +10,11 @@ use std::sync::Arc;
 use rmcp::model::{CallToolResult, ContentBlock, ErrorData as McpError};
 
 use k7s_core::error::AppError;
-use k7s_core::kube::{observability::alerting, observability::grafana, manager::ClientManager, observability::metrics::parse_cpu_millis, observability::metrics::parse_mem_bytes, observability::metrics_config, observability::saved_queries};
+use k7s_core::kube::{
+    manager::ClientManager, observability::alerting, observability::grafana,
+    observability::metrics::parse_cpu_millis, observability::metrics::parse_mem_bytes,
+    observability::metrics_config, observability::saved_queries,
+};
 
 use crate::mcp::helpers::{json_result, tool_error};
 use crate::mcp::kube_api;
@@ -23,9 +27,7 @@ use crate::mcp::params::*;
 // Monitoring: Prometheus / AlertManager / Grafana
 // -----------------------------------------------------------------------
 
-pub(crate) async fn prometheus_query(
-    p: PrometheusQueryParams,
-) -> Result<CallToolResult, McpError> {
+pub(crate) async fn prometheus_query(p: PrometheusQueryParams) -> Result<CallToolResult, McpError> {
     let result = metrics_config::query(&p.name, &p.promql)
         .await
         .map_err(tool_error)?;
@@ -42,9 +44,7 @@ pub(crate) async fn prometheus_query_range(
     json_result(&result)
 }
 
-pub(crate) async fn alertmanager_alerts(
-    p: InstanceNameParams,
-) -> Result<CallToolResult, McpError> {
+pub(crate) async fn alertmanager_alerts(p: InstanceNameParams) -> Result<CallToolResult, McpError> {
     let alerts = alerting::list_alerts(&p.name).await.map_err(tool_error)?;
     json_result(&alerts)
 }
@@ -63,9 +63,7 @@ pub(crate) async fn grafana_dashboard_url(
     Ok(CallToolResult::success(vec![ContentBlock::text(url)]))
 }
 
-pub(crate) async fn saved_query_run(
-    p: SavedQueryRunParams,
-) -> Result<CallToolResult, McpError> {
+pub(crate) async fn saved_query_run(p: SavedQueryRunParams) -> Result<CallToolResult, McpError> {
     let query = saved_queries::list()
         .map_err(tool_error)?
         .into_iter()
@@ -86,9 +84,7 @@ pub(crate) async fn saved_query_run(
 // Silences (create / delete) and alert rules
 // -----------------------------------------------------------------------
 
-pub(crate) async fn create_silence(
-    p: CreateSilenceParams,
-) -> Result<CallToolResult, McpError> {
+pub(crate) async fn create_silence(p: CreateSilenceParams) -> Result<CallToolResult, McpError> {
     let ends_at = (k7s_deps::chrono::Utc::now()
         + k7s_deps::chrono::Duration::hours(p.duration_hours.unwrap_or(4)))
     .to_rfc3339();
@@ -113,18 +109,14 @@ pub(crate) async fn create_silence(
     json_result(&k7s_deps::serde_json::json!({ "silenceId": id }))
 }
 
-pub(crate) async fn delete_silence(
-    p: DeleteSilenceParams,
-) -> Result<CallToolResult, McpError> {
+pub(crate) async fn delete_silence(p: DeleteSilenceParams) -> Result<CallToolResult, McpError> {
     alerting::delete_silence(&p.instance, &p.silence_id)
         .await
         .map_err(tool_error)?;
     json_result(&k7s_deps::serde_json::json!({ "deleted": true }))
 }
 
-pub(crate) async fn list_alert_rules(
-    p: InstanceNameParams,
-) -> Result<CallToolResult, McpError> {
+pub(crate) async fn list_alert_rules(p: InstanceNameParams) -> Result<CallToolResult, McpError> {
     let groups = alerting::prometheus_rules(&p.name)
         .await
         .map_err(tool_error)?;
@@ -200,7 +192,9 @@ pub(crate) async fn top_pods(
     manager: &Arc<ClientManager>,
     p: TopPodsParams,
 ) -> Result<CallToolResult, McpError> {
-    let client = kube_api::require_client(manager).await.map_err(tool_error)?;
+    let client = kube_api::require_client(manager)
+        .await
+        .map_err(tool_error)?;
     let ns = if p.namespace.is_empty() {
         None
     } else {
@@ -211,7 +205,9 @@ pub(crate) async fn top_pods(
 }
 
 pub(crate) async fn top_nodes(manager: &Arc<ClientManager>) -> Result<CallToolResult, McpError> {
-    let client = kube_api::require_client(manager).await.map_err(tool_error)?;
+    let client = kube_api::require_client(manager)
+        .await
+        .map_err(tool_error)?;
     let rows = kube_api::top_nodes(&client).await.map_err(tool_error)?;
     json_result(&rows)
 }
@@ -224,7 +220,9 @@ pub(crate) async fn cost_estimate(
     manager: &Arc<ClientManager>,
     p: NamespaceParam,
 ) -> Result<CallToolResult, McpError> {
-    let client = kube_api::require_client(manager).await.map_err(tool_error)?;
+    let client = kube_api::require_client(manager)
+        .await
+        .map_err(tool_error)?;
     let pods: k7s_deps::kube::Api<k7s_deps::k8s_openapi::api::core::v1::Pod> =
         k7s_deps::kube::Api::namespaced(client, &p.namespace);
     let list = pods.list(&Default::default()).await.map_err(tool_error)?;

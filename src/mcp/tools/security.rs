@@ -24,7 +24,9 @@ pub(crate) async fn rbac_who_can(
     manager: &Arc<ClientManager>,
     p: RbacWhoCanParams,
 ) -> Result<CallToolResult, McpError> {
-    let client = kube_api::require_client(manager).await.map_err(tool_error)?;
+    let client = kube_api::require_client(manager)
+        .await
+        .map_err(tool_error)?;
 
     // Check ClusterRoleBindings
     let crbs: k7s_deps::kube::Api<k7s_deps::k8s_openapi::api::rbac::v1::ClusterRoleBinding> =
@@ -93,7 +95,9 @@ pub(crate) async fn security_audit(
     manager: &Arc<ClientManager>,
     _p: SecurityAuditParams,
 ) -> Result<CallToolResult, McpError> {
-    let client = kube_api::require_client(manager).await.map_err(tool_error)?;
+    let client = kube_api::require_client(manager)
+        .await
+        .map_err(tool_error)?;
     let report = k7s_core::kube::security::security_audit::run_audit(client)
         .await
         .map_err(tool_error)?;
@@ -104,7 +108,9 @@ pub(crate) async fn rbac_permission_matrix(
     manager: &Arc<ClientManager>,
     _p: RbacPermissionMatrixParams,
 ) -> Result<CallToolResult, McpError> {
-    let client = kube_api::require_client(manager).await.map_err(tool_error)?;
+    let client = kube_api::require_client(manager)
+        .await
+        .map_err(tool_error)?;
     let matrix = k7s_core::kube::security::rbac_matrix::build_rbac_matrix(client)
         .await
         .map_err(tool_error)?;
@@ -115,7 +121,9 @@ pub(crate) async fn network_policy_audit(
     manager: &Arc<ClientManager>,
     p: NamespaceParam,
 ) -> Result<CallToolResult, McpError> {
-    let client = kube_api::require_client(manager).await.map_err(tool_error)?;
+    let client = kube_api::require_client(manager)
+        .await
+        .map_err(tool_error)?;
     let nps: k7s_deps::kube::Api<k7s_deps::k8s_openapi::api::networking::v1::NetworkPolicy> =
         k7s_deps::kube::Api::namespaced(client.clone(), &p.namespace);
     let list = nps.list(&Default::default()).await.map_err(tool_error)?;
@@ -176,9 +184,7 @@ pub(crate) async fn network_policy_audit(
 // Audit logs
 // -----------------------------------------------------------------------
 
-pub(crate) async fn audit_search(
-    p: AuditSearchParams,
-) -> Result<CallToolResult, McpError> {
+pub(crate) async fn audit_search(p: AuditSearchParams) -> Result<CallToolResult, McpError> {
     let query = k7s_core::kube::observability::audit::AuditQuery {
         namespace: String::new(),
         instance: p.instance,

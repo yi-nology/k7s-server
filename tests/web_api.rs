@@ -749,7 +749,10 @@ async fn invoke_registry_dispatches_known_command() {
             axum::http::Request::builder()
                 .method("POST")
                 .uri("/api/invoke/default_kubeconfig_path")
-                .header(axum::http::header::AUTHORIZATION, format!("Bearer {}", auth_token(&state)))
+                .header(
+                    axum::http::header::AUTHORIZATION,
+                    format!("Bearer {}", auth_token(&state)),
+                )
                 .body(axum::body::Body::empty())
                 .unwrap(),
         )
@@ -774,7 +777,10 @@ async fn invoke_registry_rejects_unknown_command() {
             axum::http::Request::builder()
                 .method("POST")
                 .uri("/api/invoke/definitely_not_a_command")
-                .header(axum::http::header::AUTHORIZATION, format!("Bearer {}", auth_token(&state)))
+                .header(
+                    axum::http::header::AUTHORIZATION,
+                    format!("Bearer {}", auth_token(&state)),
+                )
                 .body(axum::body::Body::empty())
                 .unwrap(),
         )
@@ -804,7 +810,10 @@ async fn invoke_registry_reports_bad_arguments() {
             axum::http::Request::builder()
                 .method("POST")
                 .uri("/api/invoke/get_yaml")
-                .header(axum::http::header::AUTHORIZATION, format!("Bearer {}", auth_token(&state)))
+                .header(
+                    axum::http::header::AUTHORIZATION,
+                    format!("Bearer {}", auth_token(&state)),
+                )
                 .header(axum::http::header::CONTENT_TYPE, "application/json")
                 .body(axum::body::Body::from(r#"{"kind": 42}"#))
                 .unwrap(),

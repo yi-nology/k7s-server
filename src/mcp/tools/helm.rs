@@ -91,9 +91,7 @@ pub(crate) async fn helm_rollback(
     json_result(&result)
 }
 
-pub(crate) async fn helm_history(
-    p: HelmHistoryParams,
-) -> Result<CallToolResult, McpError> {
+pub(crate) async fn helm_history(p: HelmHistoryParams) -> Result<CallToolResult, McpError> {
     let rows = ops::release_history(&p.release, &p.namespace, None)
         .await
         .map_err(tool_error)?;
@@ -104,7 +102,9 @@ pub(crate) async fn helm_manifest_revision(
     manager: &Arc<ClientManager>,
     p: HelmManifestRevisionParams,
 ) -> Result<CallToolResult, McpError> {
-    let client = kube_api::require_client(manager).await.map_err(tool_error)?;
+    let client = kube_api::require_client(manager)
+        .await
+        .map_err(tool_error)?;
     let manifest =
         k7s_core::kube::helm::helm_manifest_revision(client, &p.namespace, &p.name, p.revision)
             .await
@@ -116,7 +116,9 @@ pub(crate) async fn helm_values_revision(
     manager: &Arc<ClientManager>,
     p: HelmValuesRevisionParams,
 ) -> Result<CallToolResult, McpError> {
-    let client = kube_api::require_client(manager).await.map_err(tool_error)?;
+    let client = kube_api::require_client(manager)
+        .await
+        .map_err(tool_error)?;
     let values =
         k7s_core::kube::helm::helm_values_revision(client, &p.namespace, &p.name, p.revision)
             .await
@@ -124,9 +126,7 @@ pub(crate) async fn helm_values_revision(
     json_result(&values)
 }
 
-pub(crate) async fn helm_show_values(
-    p: HelmShowValuesParams,
-) -> Result<CallToolResult, McpError> {
+pub(crate) async fn helm_show_values(p: HelmShowValuesParams) -> Result<CallToolResult, McpError> {
     let values = ops::render_default_values(&p.chart, &p.version, None)
         .await
         .map_err(tool_error)?;
@@ -142,9 +142,7 @@ pub(crate) async fn helm_list_repos() -> Result<CallToolResult, McpError> {
     json_result(&repos)
 }
 
-pub(crate) async fn helm_search_charts(
-    p: HelmSearchParams,
-) -> Result<CallToolResult, McpError> {
+pub(crate) async fn helm_search_charts(p: HelmSearchParams) -> Result<CallToolResult, McpError> {
     let charts = market::search_charts(&p.query).map_err(tool_error)?;
     json_result(&charts)
 }

@@ -10,7 +10,7 @@ use std::sync::Arc;
 use rmcp::model::{CallToolResult, ErrorData as McpError};
 
 use k7s_core::error::AppError;
-use k7s_core::kube::{image::archive, image::sync, image::repo, manager::ClientManager};
+use k7s_core::kube::{image::archive, image::repo, image::sync, manager::ClientManager};
 
 use crate::mcp::helpers::{json_result, tool_error};
 use crate::mcp::params::*;
@@ -32,9 +32,7 @@ pub(crate) async fn image_registry_tags(
                 p.name
             )))
         })?;
-    let tags = repo::list_tags(&reg, &p.repo)
-        .await
-        .map_err(tool_error)?;
+    let tags = repo::list_tags(&reg, &p.repo).await.map_err(tool_error)?;
     json_result(&tags)
 }
 

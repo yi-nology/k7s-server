@@ -45,7 +45,9 @@ pub(crate) async fn restart_pod(
     manager: &Arc<ClientManager>,
     p: NameNamespaceParams,
 ) -> Result<CallToolResult, McpError> {
-    let client = kube_api::require_client(manager).await.map_err(tool_error)?;
+    let client = kube_api::require_client(manager)
+        .await
+        .map_err(tool_error)?;
     let api: Api<Pod> = Api::namespaced(client, &p.namespace);
     let pod = api
         .get(&p.name)
@@ -70,7 +72,9 @@ pub(crate) async fn diagnose_pod(
     manager: &Arc<ClientManager>,
     p: DiagnosePodParams,
 ) -> Result<CallToolResult, McpError> {
-    let client = kube_api::require_client(manager).await.map_err(tool_error)?;
+    let client = kube_api::require_client(manager)
+        .await
+        .map_err(tool_error)?;
     let diagnosis = k7s_core::kube::pod_diagnosis::diagnose_pod(client, &p.namespace, &p.pod)
         .await
         .map_err(tool_error)?;
@@ -85,7 +89,9 @@ pub(crate) async fn exec_command(
     manager: &Arc<ClientManager>,
     p: ExecParams,
 ) -> Result<CallToolResult, McpError> {
-    let client = kube_api::require_client(manager).await.map_err(tool_error)?;
+    let client = kube_api::require_client(manager)
+        .await
+        .map_err(tool_error)?;
     let container = if p.container.is_empty() {
         None
     } else {
@@ -106,7 +112,9 @@ pub(crate) async fn pod_list_files(
     manager: &Arc<ClientManager>,
     p: PodFileParams,
 ) -> Result<CallToolResult, McpError> {
-    let client = kube_api::require_client(manager).await.map_err(tool_error)?;
+    let client = kube_api::require_client(manager)
+        .await
+        .map_err(tool_error)?;
     let container = if p.container.is_empty() {
         None
     } else {
@@ -122,7 +130,9 @@ pub(crate) async fn pod_read_file(
     manager: &Arc<ClientManager>,
     p: PodFileParams,
 ) -> Result<CallToolResult, McpError> {
-    let client = kube_api::require_client(manager).await.map_err(tool_error)?;
+    let client = kube_api::require_client(manager)
+        .await
+        .map_err(tool_error)?;
     let container = if p.container.is_empty() {
         None
     } else {
@@ -138,7 +148,9 @@ pub(crate) async fn pod_write_file(
     manager: &Arc<ClientManager>,
     p: PodFileWriteParams,
 ) -> Result<CallToolResult, McpError> {
-    let client = kube_api::require_client(manager).await.map_err(tool_error)?;
+    let client = kube_api::require_client(manager)
+        .await
+        .map_err(tool_error)?;
     let container = if p.container.is_empty() {
         None
     } else {
@@ -155,7 +167,9 @@ pub(crate) async fn pod_download_file(
     p: PodFileParams,
 ) -> Result<CallToolResult, McpError> {
     use k7s_deps::base64::Engine;
-    let client = kube_api::require_client(manager).await.map_err(tool_error)?;
+    let client = kube_api::require_client(manager)
+        .await
+        .map_err(tool_error)?;
     let container = if p.container.is_empty() {
         None
     } else {
@@ -173,7 +187,9 @@ pub(crate) async fn pod_upload_file(
     p: PodFileUploadParams,
 ) -> Result<CallToolResult, McpError> {
     use k7s_deps::base64::Engine;
-    let client = kube_api::require_client(manager).await.map_err(tool_error)?;
+    let client = kube_api::require_client(manager)
+        .await
+        .map_err(tool_error)?;
     let bytes = k7s_deps::base64::engine::general_purpose::STANDARD
         .decode(&p.tar_b64)
         .map_err(|e| tool_error(AppError::Other(format!("base64 decode: {e}"))))?;

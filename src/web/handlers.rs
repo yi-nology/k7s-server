@@ -22,7 +22,8 @@ use k7s_core::core::prefs::{self, Prefs};
 use k7s_core::core::shell_common;
 use k7s_core::core::CoreState;
 use k7s_core::error::{AppError, AppResult};
-use k7s_core::kube::{client::{self, ContextInfo},
+use k7s_core::kube::{
+    client::{self, ContextInfo},
     manager::ImportedContext,
 };
 
@@ -32,7 +33,6 @@ use super::types::*;
 // ---------------------------------------------------------------------------
 // list_contexts
 // ---------------------------------------------------------------------------
-
 
 // ---------------------------------------------------------------------------
 // default_kubeconfig_path
@@ -160,11 +160,9 @@ pub async fn import_kubeconfig_content(
 // connect
 // ---------------------------------------------------------------------------
 
-
 // ---------------------------------------------------------------------------
 // Catch-all stub for unimplemented commands.
 // ---------------------------------------------------------------------------
-
 
 // ---------------------------------------------------------------------------
 // Helpers (re-implementations of the small bits commands.rs's connect/get_yaml
@@ -206,7 +204,8 @@ pub async fn sbom_generate_image(
     };
     let result: AppResult<_> = async {
         let sbom = engine.generate_with_vulns(&image_ref, &format).await?;
-        let storage = k7s_core::kube::security::sbom_storage::SbomStorage::new(&state.core.data_dir);
+        let storage =
+            k7s_core::kube::security::sbom_storage::SbomStorage::new(&state.core.data_dir);
         storage.save(&sbom)?;
         Ok(sbom)
     }

@@ -66,12 +66,6 @@ pub(super) fn respond<T: Serialize>(r: AppResult<T>) -> axum::response::Response
 // Request-body structs (the JSON the front-end POSTs for each command).
 // ---------------------------------------------------------------------------
 
-
-
-
-
-
-
 #[derive(Deserialize)]
 pub struct SavePrefsArgs {
     pub prefs: Prefs,
@@ -93,21 +87,12 @@ pub struct ImportKubeconfigContentArgs {
     pub contents: String,
 }
 
-
-
-
-
-
-
-
-
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DiagnosePodArgs {
     pub namespace: String,
     pub pod: String,
 }
-
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -116,9 +101,6 @@ pub struct ListRevisionsArgs {
     pub namespace: String,
     pub name: String,
 }
-
-
-
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -134,10 +116,6 @@ pub struct ShellResizeArgs {
     pub cols: u16,
     pub rows: u16,
 }
-
-
-
-
 
 /// Args for `dry_run_yaml_bundle` — just the multi-doc YAML string. Each
 /// document's apiVersion/kind/namespace/name are read from the doc itself.
@@ -171,10 +149,6 @@ pub struct ImportResultWire {
     pub contexts: Vec<ContextInfo>,
     pub path: String,
 }
-
-
-
-
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]

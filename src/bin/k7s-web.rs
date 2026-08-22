@@ -68,9 +68,7 @@ async fn main() -> std::io::Result<()> {
         .unwrap_or_default()
         .into_iter()
         .filter_map(|(_, addr)| match addr {
-            std::net::IpAddr::V4(v4)
-                if !v4.is_loopback() && !v4.is_link_local() =>
-            {
+            std::net::IpAddr::V4(v4) if !v4.is_loopback() && !v4.is_link_local() => {
                 Some(v4.to_string())
             }
             _ => None,
@@ -86,7 +84,12 @@ async fn main() -> std::io::Result<()> {
     } else {
         hostname
     };
-    let os_info = format!("{} {} / {}", std::env::consts::OS, std::env::consts::ARCH, hostname);
+    let os_info = format!(
+        "{} {} / {}",
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        hostname
+    );
 
     // Build the LAN lines first to measure the box width.
     let mut lan_lines: Vec<String> = Vec::new();
@@ -96,7 +99,8 @@ async fn main() -> std::io::Result<()> {
         }
     }
     // Box width: enough for the longest content line, minimum 48.
-    let content_width = lan_lines.iter()
+    let content_width = lan_lines
+        .iter()
         .map(|s| s.len() + 12) // "  LAN      : " prefix
         .chain(std::iter::once(os_info.len() + 12))
         .chain(std::iter::once(url.len() + 12))
@@ -108,13 +112,21 @@ async fn main() -> std::io::Result<()> {
 
     println!();
     println!("  ╔{}╗", "═".repeat(w));
-    println!("  ║{:^width$}║", format!("k7s-web  v{}", version), width = w);
+    println!(
+        "  ║{:^width$}║",
+        format!("k7s-web  v{}", version),
+        width = w
+    );
     println!("  ╠{}╣", "═".repeat(w));
     println!("  ║  Platform : {:<width$}║", os_info, width = w - 13);
     println!("  ║  Local    : {:<width$}║", url, width = w - 13);
     if addr.ip().is_unspecified() {
         if lan_lines.is_empty() {
-            println!("  ║  LAN      : {:<width$}║", "(no non-loopback IPv4 found)", width = w - 13);
+            println!(
+                "  ║  LAN      : {:<width$}║",
+                "(no non-loopback IPv4 found)",
+                width = w - 13
+            );
         } else {
             for lan in &lan_lines {
                 println!("  ║  LAN      : {:<width$}║", lan, width = w - 13);

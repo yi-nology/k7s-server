@@ -21,12 +21,13 @@ pub(crate) async fn scale_resource(
     manager: &Arc<ClientManager>,
     p: ScaleParams,
 ) -> Result<CallToolResult, McpError> {
-    let client = kube_api::require_client(manager).await.map_err(tool_error)?;
+    let client = kube_api::require_client(manager)
+        .await
+        .map_err(tool_error)?;
     let (api, _is_helm) = kube_api::dynamic_api(client, &p.kind, &p.namespace, manager)
         .await
         .map_err(tool_error)?;
-    let patch =
-        Patch::Merge(k7s_deps::serde_json::json!({ "spec": { "replicas": p.replicas } }));
+    let patch = Patch::Merge(k7s_deps::serde_json::json!({ "spec": { "replicas": p.replicas } }));
     api.patch(&p.name, &PatchParams::default(), &patch)
         .await
         .map_err(|e| tool_error(AppError::Kube(e.to_string())))?;
@@ -46,7 +47,9 @@ pub(crate) async fn restart_rollout(
             p.kind
         ))));
     }
-    let client = kube_api::require_client(manager).await.map_err(tool_error)?;
+    let client = kube_api::require_client(manager)
+        .await
+        .map_err(tool_error)?;
     let (api, _is_helm) = kube_api::dynamic_api(client, &p.kind, &p.namespace, manager)
         .await
         .map_err(tool_error)?;
@@ -75,7 +78,9 @@ pub(crate) async fn trigger_cronjob(
     manager: &Arc<ClientManager>,
     p: NameNamespaceNameParams,
 ) -> Result<CallToolResult, McpError> {
-    let client = kube_api::require_client(manager).await.map_err(tool_error)?;
+    let client = kube_api::require_client(manager)
+        .await
+        .map_err(tool_error)?;
     let job_name = kube_api::trigger_cronjob(&client, &p.namespace, &p.name)
         .await
         .map_err(tool_error)?;

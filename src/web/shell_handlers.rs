@@ -17,16 +17,12 @@ use super::types::*;
 // `EventSink`; the web path does the same, just behind a different transport.
 // ---------------------------------------------------------------------------
 
-
-
-
 // ---------------------------------------------------------------------------
 // Shell sessions (B4, B53) — the same exec task the Tauri shell spawns, with
 // input/resize going over POST and the byte stream coming back through the
 // shared `EventSink` -> SSE. The wire names match the Tauri commands so the
 // front-end can swap providers unchanged.
 // ---------------------------------------------------------------------------
-
 
 pub async fn shell_input(
     State(state): State<WebState>,
@@ -59,6 +55,3 @@ pub async fn shell_resize(
     .await;
     respond(result)
 }
-
-
-

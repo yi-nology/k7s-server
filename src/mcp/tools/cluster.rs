@@ -13,7 +13,9 @@ use serde::Serialize;
 
 use k7s_core::core::shell_common::validate_apply_yaml;
 use k7s_core::error::AppError;
-use k7s_core::kube::{client as kube_client, drain, endpoints, manager::{ClientManager, ImportedContext},
+use k7s_core::kube::{
+    client as kube_client, drain, endpoints,
+    manager::{ClientManager, ImportedContext},
     templates,
 };
 
@@ -176,7 +178,9 @@ pub(crate) async fn apply_yaml(
     p: ApplyYamlParams,
 ) -> Result<CallToolResult, McpError> {
     ensure_writable(&p.kind).map_err(tool_error)?;
-    let client = kube_api::require_client(manager).await.map_err(tool_error)?;
+    let client = kube_api::require_client(manager)
+        .await
+        .map_err(tool_error)?;
     let obj: DynamicObject = k7s_deps::yaml_serde::from_str(&p.yaml)
         .map_err(|e| tool_error(AppError::Other(e.to_string())))?;
     let namespaced = kube_api::kind_is_namespaced(&p.kind, manager).await;
@@ -199,7 +203,9 @@ pub(crate) async fn dry_run_yaml(
     p: ApplyYamlParams,
 ) -> Result<CallToolResult, McpError> {
     ensure_writable(&p.kind).map_err(tool_error)?;
-    let client = kube_api::require_client(manager).await.map_err(tool_error)?;
+    let client = kube_api::require_client(manager)
+        .await
+        .map_err(tool_error)?;
     let obj: DynamicObject = k7s_deps::yaml_serde::from_str(&p.yaml)
         .map_err(|e| tool_error(AppError::Other(e.to_string())))?;
     let namespaced = kube_api::kind_is_namespaced(&p.kind, manager).await;
@@ -245,7 +251,9 @@ pub(crate) async fn delete_resource(
     manager: &Arc<ClientManager>,
     p: GetResourceParams,
 ) -> Result<CallToolResult, McpError> {
-    let client = kube_api::require_client(manager).await.map_err(tool_error)?;
+    let client = kube_api::require_client(manager)
+        .await
+        .map_err(tool_error)?;
     let (api, _is_helm) = kube_api::dynamic_api(client, &p.kind, &p.namespace, manager)
         .await
         .map_err(tool_error)?;
@@ -259,13 +267,14 @@ pub(crate) async fn set_cordon(
     manager: &Arc<ClientManager>,
     p: CordonParams,
 ) -> Result<CallToolResult, McpError> {
-    let client = kube_api::require_client(manager).await.map_err(tool_error)?;
+    let client = kube_api::require_client(manager)
+        .await
+        .map_err(tool_error)?;
     let (api, _is_helm) = kube_api::dynamic_api(client, "nodes", "", manager)
         .await
         .map_err(tool_error)?;
-    let patch = Patch::Merge(
-        k7s_deps::serde_json::json!({ "spec": { "unschedulable": p.unschedulable } }),
-    );
+    let patch =
+        Patch::Merge(k7s_deps::serde_json::json!({ "spec": { "unschedulable": p.unschedulable } }));
     api.patch(&p.name, &PatchParams::default(), &patch)
         .await
         .map_err(|e| tool_error(AppError::Kube(e.to_string())))?;
@@ -284,7 +293,9 @@ pub(crate) async fn drain_node(
     manager: &Arc<ClientManager>,
     p: DrainParams,
 ) -> Result<CallToolResult, McpError> {
-    let client = kube_api::require_client(manager).await.map_err(tool_error)?;
+    let client = kube_api::require_client(manager)
+        .await
+        .map_err(tool_error)?;
     drain::cordon(client.clone(), &p.node)
         .await
         .map_err(tool_error)?;
@@ -379,7 +390,9 @@ pub(crate) async fn apply_yaml_bundle(
     manager: &Arc<ClientManager>,
     p: YamlBundleParams,
 ) -> Result<CallToolResult, McpError> {
-    let client = kube_api::require_client(manager).await.map_err(tool_error)?;
+    let client = kube_api::require_client(manager)
+        .await
+        .map_err(tool_error)?;
     let results = templates::multi_apply(&p.yaml, client, manager)
         .await
         .map_err(tool_error)?;
@@ -390,7 +403,9 @@ pub(crate) async fn dry_run_yaml_bundle(
     manager: &Arc<ClientManager>,
     p: YamlBundleParams,
 ) -> Result<CallToolResult, McpError> {
-    let client = kube_api::require_client(manager).await.map_err(tool_error)?;
+    let client = kube_api::require_client(manager)
+        .await
+        .map_err(tool_error)?;
     let results = templates::multi_dry_run(&p.yaml, client)
         .await
         .map_err(tool_error)?;
@@ -404,7 +419,9 @@ pub(crate) async fn dry_run_yaml_bundle(
 pub(crate) async fn list_api_resources(
     manager: &Arc<ClientManager>,
 ) -> Result<CallToolResult, McpError> {
-    let client = kube_api::require_client(manager).await.map_err(tool_error)?;
+    let client = kube_api::require_client(manager)
+        .await
+        .map_err(tool_error)?;
     let rows = kube_api::list_api_resources(&client)
         .await
         .map_err(tool_error)?;
@@ -415,7 +432,9 @@ pub(crate) async fn list_endpoints(
     manager: &Arc<ClientManager>,
     p: ListEndpointsParams,
 ) -> Result<CallToolResult, McpError> {
-    let client = kube_api::require_client(manager).await.map_err(tool_error)?;
+    let client = kube_api::require_client(manager)
+        .await
+        .map_err(tool_error)?;
     let rows = if !p.service.is_empty() {
         endpoints::list_for_service(&client, &p.namespace, &p.service)
             .await
@@ -480,7 +499,9 @@ pub(crate) async fn import_kubeconfig(
 pub(crate) async fn diagnose_cluster(
     manager: &Arc<ClientManager>,
 ) -> Result<CallToolResult, McpError> {
-    let client = kube_api::require_client(manager).await.map_err(tool_error)?;
+    let client = kube_api::require_client(manager)
+        .await
+        .map_err(tool_error)?;
     let mut issues: Vec<k7s_deps::serde_json::Value> = Vec::new();
 
     // Check nodes
@@ -500,8 +521,7 @@ pub(crate) async fn diagnose_cluster(
                         "issue": "NotReady", "message": c.message.as_deref().unwrap_or("")
                     }));
                 }
-                if (c.type_ == "DiskPressure" || c.type_ == "MemoryPressure")
-                    && c.status == "True"
+                if (c.type_ == "DiskPressure" || c.type_ == "MemoryPressure") && c.status == "True"
                 {
                     issues.push(k7s_deps::serde_json::json!({
                         "severity": "warning", "kind": "Node", "name": name,
@@ -562,13 +582,12 @@ pub(crate) async fn diagnose_cluster(
     }
 
     // Check deployments
-    let deployments =
-        k7s_deps::kube::Api::<k7s_deps::k8s_openapi::api::apps::v1::Deployment>::all(
-            client.clone(),
-        )
-        .list(&Default::default())
-        .await
-        .map_err(tool_error)?;
+    let deployments = k7s_deps::kube::Api::<k7s_deps::k8s_openapi::api::apps::v1::Deployment>::all(
+        client.clone(),
+    )
+    .list(&Default::default())
+    .await
+    .map_err(tool_error)?;
     for dep in &deployments.items {
         let name = dep.metadata.name.clone().unwrap_or_default();
         let ns = dep.metadata.namespace.clone().unwrap_or_default();
@@ -695,7 +714,9 @@ pub(crate) async fn find_resources_by_label(
 pub(crate) async fn cluster_health(
     manager: &Arc<ClientManager>,
 ) -> Result<CallToolResult, McpError> {
-    let client = kube_api::require_client(manager).await.map_err(tool_error)?;
+    let client = kube_api::require_client(manager)
+        .await
+        .map_err(tool_error)?;
 
     let nodes =
         k7s_deps::kube::Api::<k7s_deps::k8s_openapi::api::core::v1::Node>::all(client.clone())
@@ -707,13 +728,12 @@ pub(crate) async fn cluster_health(
             .list(&Default::default())
             .await
             .map_err(tool_error)?;
-    let deployments =
-        k7s_deps::kube::Api::<k7s_deps::k8s_openapi::api::apps::v1::Deployment>::all(
-            client.clone(),
-        )
-        .list(&Default::default())
-        .await
-        .map_err(tool_error)?;
+    let deployments = k7s_deps::kube::Api::<k7s_deps::k8s_openapi::api::apps::v1::Deployment>::all(
+        client.clone(),
+    )
+    .list(&Default::default())
+    .await
+    .map_err(tool_error)?;
 
     let ready_nodes = nodes
         .items

@@ -18,35 +18,22 @@ use super::types::*;
 // release Secret (mirrors commands::get_yaml).
 // ---------------------------------------------------------------------------
 
-
 // ---------------------------------------------------------------------------
 // get_events — read events filtered by the involved object.
 // ---------------------------------------------------------------------------
 
-
 // ---------------------------------------------------------------------------
 // get_properties — delegate to the core helper.
 // ---------------------------------------------------------------------------
-
 
 // ---------------------------------------------------------------------------
 // get_secret_data — decoded Secret values (base64 -> UTF-8). Deliberately
 // separate from get_yaml which redacts values.
 // ---------------------------------------------------------------------------
 
-
 // ---------------------------------------------------------------------------
 // Mutation commands — share the same `dynamic_api` path the Tauri shell uses.
 // ---------------------------------------------------------------------------
-
-
-
-
-
-
-
-
-
 
 /// List the revision history of a Deployment/StatefulSet/DaemonSet — backs the
 /// Revisions detail tab in web mode. Mirrors the `list_revisions` Tauri command.
@@ -62,13 +49,12 @@ pub async fn list_revisions(
             )));
         }
         let client = core_client(&state.core).await?;
-        k7s_core::kube::rollout::list_revisions(client, &args.kind, &args.namespace, &args.name).await
+        k7s_core::kube::rollout::list_revisions(client, &args.kind, &args.namespace, &args.name)
+            .await
     }
     .await;
     respond(result)
 }
-
-
 
 // ---------------------------------------------------------------------------
 // list_endpoints — EndpointSlices for the topology graph.
@@ -92,9 +78,6 @@ pub async fn diagnose_pod(
     .await;
     respond(result)
 }
-
-
-
 
 // ---------------------------------------------------------------------------
 // Helm revision diff — manifest / values for a specific revision
@@ -124,8 +107,13 @@ pub async fn helm_values_revision(
 ) -> axum::response::Response {
     let result: AppResult<k7s_deps::serde_json::Value> = (|| async {
         let client = core_client(&state.core).await?;
-        k7s_core::kube::helm::helm_values_revision(client, &args.namespace, &args.name, args.revision)
-            .await
+        k7s_core::kube::helm::helm_values_revision(
+            client,
+            &args.namespace,
+            &args.name,
+            args.revision,
+        )
+        .await
     })()
     .await;
     respond(result)

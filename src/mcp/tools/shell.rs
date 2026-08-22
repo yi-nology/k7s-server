@@ -16,9 +16,9 @@ use rmcp::model::{CallToolResult, ContentBlock, ErrorData as McpError};
 use serde::Serialize;
 
 use k7s_core::error::AppError;
-use k7s_core::kube::{manager::{ClientManager, ForwardDto, ShellSession},
-    nodeshell,
-    portforward,
+use k7s_core::kube::{
+    manager::{ClientManager, ForwardDto, ShellSession},
+    nodeshell, portforward,
 };
 
 use crate::mcp::helpers::{json_result, shell_seq, spawn_forward, tool_error, uuid_like};
@@ -36,7 +36,9 @@ pub(crate) async fn start_port_forward(
     manager: &Arc<ClientManager>,
     p: StartPortForwardParams,
 ) -> Result<CallToolResult, McpError> {
-    let client = kube_api::require_client(manager).await.map_err(tool_error)?;
+    let client = kube_api::require_client(manager)
+        .await
+        .map_err(tool_error)?;
     portforward::ensure_pod(client.clone(), &p.namespace, &p.pod)
         .await
         .map_err(tool_error)?;
@@ -58,7 +60,9 @@ pub(crate) async fn start_service_port_forward(
     manager: &Arc<ClientManager>,
     p: StartServiceForwardParams,
 ) -> Result<CallToolResult, McpError> {
-    let client = kube_api::require_client(manager).await.map_err(tool_error)?;
+    let client = kube_api::require_client(manager)
+        .await
+        .map_err(tool_error)?;
     let (pod, target_port) =
         portforward::resolve_service(client.clone(), &p.namespace, &p.service, p.service_port)
             .await
@@ -100,7 +104,9 @@ pub(crate) async fn start_shell(
     manager: &Arc<ClientManager>,
     p: StartShellParams,
 ) -> Result<CallToolResult, McpError> {
-    let client = kube_api::require_client(manager).await.map_err(tool_error)?;
+    let client = kube_api::require_client(manager)
+        .await
+        .map_err(tool_error)?;
     let id = format!("sh-{}-{}", p.pod, uuid_like(&mut shell_seq()),);
     let (input_tx, input_rx) = mpsc::channel::<Vec<u8>>(64);
     let (resize_tx, resize_rx) = mpsc::channel::<(u16, u16)>(8);
@@ -178,7 +184,9 @@ pub(crate) async fn start_node_shell(
     p: DrainParams,
 ) -> Result<CallToolResult, McpError> {
     let _ = p.timeout_secs; // Currently unused; future: surface to the user as a wait budget.
-    let client = kube_api::require_client(manager).await.map_err(tool_error)?;
+    let client = kube_api::require_client(manager)
+        .await
+        .map_err(tool_error)?;
     let api: Api<Pod> = Api::namespaced(client.clone(), nodeshell::DEBUG_NAMESPACE);
 
     // Sweep prior debug pods for this node so a fresh session never
