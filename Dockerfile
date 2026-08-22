@@ -61,9 +61,9 @@ RUN mkdir -p crates/k7s-deps/src crates/k7s-core/src crates/k7s-commands/src cra
 
 # Real sources.
 COPY crates ./crates
-# rust-embed #[folder = "../../dist"] is relative to crates/k7s-server/,
-# so it looks for /src/dist/ — copy the frontend there.
-COPY dist ./dist
+# rust-embed #[folder = "./dist"] is relative to crates/k7s-server/,
+# so the frontend must land at /src/crates/k7s-server/dist.
+COPY dist ./crates/k7s-server/dist
 
 # Static musl build from the workspace root.
 RUN ARCH_TRIPLE=$(case "${TARGETARCH}" in \
