@@ -44,7 +44,7 @@ RUN case "${TARGETARCH}" in \
 WORKDIR /src
 
 # Dependency manifests first for layer caching.
-COPY Cargo.toml Cargo.lock ./
+COPY Cargo.toml ./
 COPY crates/k7s-deps/Cargo.toml ./crates/k7s-deps/
 COPY crates/k7s-core/Cargo.toml ./crates/k7s-core/
 COPY crates/k7s-commands/Cargo.toml ./crates/k7s-commands/
