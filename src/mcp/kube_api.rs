@@ -813,7 +813,7 @@ pub async fn top_pods(client: &Client, namespace: Option<&str>) -> AppResult<Vec
             }
         })
         .collect();
-    rows.sort_by(|a, b| b.cpu_millis.cmp(&a.cpu_millis));
+    rows.sort_by_key(|r| std::cmp::Reverse(r.cpu_millis));
     Ok(rows)
 }
 

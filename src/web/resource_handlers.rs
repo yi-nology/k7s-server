@@ -68,13 +68,13 @@ pub async fn diagnose_pod(
     State(state): State<WebState>,
     Json(args): Json<DiagnosePodArgs>,
 ) -> axum::response::Response {
-    let result: AppResult<k7s_deps::serde_json::Value> = (|| async {
+    let result: AppResult<k7s_deps::serde_json::Value> = async {
         let client = core_client(&state.core).await?;
         let diagnosis =
             k7s_core::kube::pod_diagnosis::diagnose_pod(client, &args.namespace, &args.pod).await?;
         k7s_deps::serde_json::to_value(diagnosis)
             .map_err(|e| AppError::Other(format!("serialize error: {e}")))
-    })()
+    }
     .await;
     respond(result)
 }
@@ -87,7 +87,7 @@ pub async fn helm_manifest_revision(
     State(state): State<WebState>,
     Json(args): Json<HelmManifestRevisionArgs>,
 ) -> axum::response::Response {
-    let result: AppResult<String> = (|| async {
+    let result: AppResult<String> = async {
         let client = core_client(&state.core).await?;
         k7s_core::kube::helm::helm_manifest_revision(
             client,
@@ -96,7 +96,7 @@ pub async fn helm_manifest_revision(
             args.revision,
         )
         .await
-    })()
+    }
     .await;
     respond(result)
 }
@@ -105,7 +105,7 @@ pub async fn helm_values_revision(
     State(state): State<WebState>,
     Json(args): Json<HelmValuesRevisionArgs>,
 ) -> axum::response::Response {
-    let result: AppResult<k7s_deps::serde_json::Value> = (|| async {
+    let result: AppResult<k7s_deps::serde_json::Value> = async {
         let client = core_client(&state.core).await?;
         k7s_core::kube::helm::helm_values_revision(
             client,
@@ -114,7 +114,7 @@ pub async fn helm_values_revision(
             args.revision,
         )
         .await
-    })()
+    }
     .await;
     respond(result)
 }

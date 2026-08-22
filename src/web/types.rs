@@ -124,9 +124,6 @@ pub struct DryRunYamlBundleArgs {
     pub yaml: String,
 }
 
-/// Args for `apply_yaml_bundle` — the create-apply counterpart of
-/// `DryRunYamlBundleArgs`. Same shape: the whole multi-doc YAML string.
-
 // ---------------------------------------------------------------------------
 // Wire DTOs — serialisable shapes returned by specific handlers.
 // ---------------------------------------------------------------------------

@@ -28,14 +28,14 @@ pub async fn shell_input(
     State(state): State<WebState>,
     Json(args): Json<ShellInputArgs>,
 ) -> axum::response::Response {
-    let result: AppResult<()> = (|| async {
+    let result: AppResult<()> = async {
         state
             .core
             .manager
             .shell_input(&args.stream_id, args.data.into_bytes())
             .await;
         Ok(())
-    })()
+    }
     .await;
     respond(result)
 }
@@ -44,14 +44,14 @@ pub async fn shell_resize(
     State(state): State<WebState>,
     Json(args): Json<ShellResizeArgs>,
 ) -> axum::response::Response {
-    let result: AppResult<()> = (|| async {
+    let result: AppResult<()> = async {
         state
             .core
             .manager
             .shell_resize(&args.stream_id, args.cols, args.rows)
             .await;
         Ok(())
-    })()
+    }
     .await;
     respond(result)
 }

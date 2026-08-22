@@ -141,9 +141,17 @@ async fn main() -> std::io::Result<()> {
     k7s_deps::tracing::info!("k7s-web v{version} listening on {url}");
 
     // ── Auto-open browser ────────────────────────────────────────────
+    // Only try when a browser is actually present — the static build often
+    // runs on headless servers where a failed xdg-open is just noise.
     if !args.no_open {
-        if let Err(e) = open::that(&url) {
-            k7s_deps::tracing::warn!("failed to open browser: {e}");
+        if browser_available() {
+            if let Err(e) = open::that(&url) {
+                k7s_deps::tracing::warn!("failed to open browser: {e}");
+            }
+        } else {
+            k7s_deps::tracing::info!(
+                "no browser detected on this host (server/headless?) — skipping auto-open"
+            );
         }
     }
 
@@ -314,4 +322,95 @@ fn parse_args() -> Args {
         }
     }
     args
+}
+
+// ---------------------------------------------------------------------------
+// Browser detection — decide whether auto-open is worth attempting.
+// ---------------------------------------------------------------------------
+
+/// Is `bin` an executable file on PATH?
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+fn which(bin: &str) -> bool {
+    std::env::var_os("PATH")
+        .map(|paths| std::env::split_paths(&paths).any(|dir| dir.join(bin).is_file()))
+        .unwrap_or(false)
+}
+
+/// Best-effort "does this host have a browser to open?" check.
+///
+/// The static binary often runs on servers: no GUI session, no browser
+/// installed. Trying to open there only produces a confusing failure —
+/// detect and skip instead. `--no-open` stays the explicit override.
+fn browser_available() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        // No graphical session → nowhere for a browser window to land.
+        if std::env::var_os("DISPLAY").is_none() && std::env::var_os("WAYLAND_DISPLAY").is_none() {
+            return false;
+        }
+        const CANDIDATES: &[&str] = &[
+            "google-chrome",
+            "google-chrome-stable",
+            "chromium",
+            "chromium-browser",
+            "firefox",
+            "firefox-esr",
+            "microsoft-edge",
+            "brave-browser",
+            // Not a browser, but if xdg-open exists it knows the default.
+            "xdg-open",
+        ];
+        CANDIDATES.iter().any(|c| which(c))
+    }
+    #[cfg(target_os = "macos")]
+    {
+        const APPS: &[&str] = &[
+            "/Applications/Google Chrome.app",
+            "/Applications/Chromium.app",
+            "/Applications/Firefox.app",
+            "/Applications/Microsoft Edge.app",
+            "/Applications/Brave Browser.app",
+            "/Applications/Safari.app",
+        ];
+        APPS.iter().any(|p| std::path::Path::new(p).exists())
+    }
+    #[cfg(target_os = "windows")]
+    {
+        const CANDIDATES: &[&str] = &["chrome.exe", "msedge.exe"];
+        const PATHS: &[&str] = &[
+            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+            r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+        ];
+        CANDIDATES.iter().any(|c| which(c))
+            || PATHS.iter().any(|p| std::path::Path::new(p).is_file())
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
+        false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[test]
+    fn which_finds_a_known_binary() {
+        // `cargo`/`rustc` are on PATH whenever tests run.
+        assert!(which("cargo") || which("rustc"));
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[test]
+    fn which_rejects_missing_binary() {
+        assert!(!which("definitely-not-a-real-binary-k7s"));
+    }
+
+    #[test]
+    fn browser_available_never_panics() {
+        // Environment-dependent by nature; the contract is only "no panic".
+        let _ = browser_available();
+    }
 }

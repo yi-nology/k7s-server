@@ -104,7 +104,7 @@ pub async fn import_kubeconfig_content(
     Json(args): Json<ImportKubeconfigContentArgs>,
 ) -> axum::response::Response {
     let core = state.core.clone();
-    let result: AppResult<ImportResultWire> = (|| async {
+    let result: AppResult<ImportResultWire> = async {
         // Parse the YAML exactly like `client::contexts_from_file` does for
         // the Tauri path, so the two shells agree on the wire shape and
         // what "unparseable" looks like to the user.
@@ -151,7 +151,7 @@ pub async fn import_kubeconfig_content(
             contexts: merged,
             path: args.filename,
         })
-    })()
+    }
     .await;
     respond(result)
 }

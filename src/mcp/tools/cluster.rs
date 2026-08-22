@@ -58,7 +58,7 @@ pub(crate) async fn connect(
     // discover CRDs. The MCP shell may have an imported kubeconfig in memory.
     let imported = manager.import_kubeconfig(&context).await;
     let import_path = manager.import_path(&context).await;
-    let cr = k7s_core::core::shell_common::connect_core(&manager, imported, import_path, &context)
+    let cr = k7s_core::core::shell_common::connect_core(manager, imported, import_path, &context)
         .await
         .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
@@ -121,7 +121,6 @@ pub(crate) async fn list_resources(
     manager: &Arc<ClientManager>,
     p: ListResourcesParams,
 ) -> Result<CallToolResult, McpError> {
-    let manager = manager;
     let items = kube_api::list_resources(
         manager,
         &p.kind,
@@ -662,11 +661,10 @@ pub(crate) async fn suggest_fix(
                             "action": "check_image", "description": "Image pull failed. Verify the image name, tag, and registry credentials."
                         }));
                     }
-                    "OOMKilled" | _
-                        if cs
-                            .pointer("/state/terminated/reason")
-                            .and_then(|r| r.as_str())
-                            == Some("OOMKilled") =>
+                    _ if cs
+                        .pointer("/state/terminated/reason")
+                        .and_then(|r| r.as_str())
+                        == Some("OOMKilled") =>
                     {
                         suggestions.push(k7s_deps::serde_json::json!({
                             "action": "increase_memory", "description": "Container was OOMkilled. Increase memory limits in the pod spec."
