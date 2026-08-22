@@ -94,7 +94,7 @@ pub(crate) async fn security_audit(
     _p: SecurityAuditParams,
 ) -> Result<CallToolResult, McpError> {
     let client = kube_api::require_client(manager).await.map_err(tool_error)?;
-    let report = k7s_core::kube::security_audit::run_audit(client)
+    let report = k7s_core::kube::security::security_audit::run_audit(client)
         .await
         .map_err(tool_error)?;
     json_result(&report)
@@ -105,7 +105,7 @@ pub(crate) async fn rbac_permission_matrix(
     _p: RbacPermissionMatrixParams,
 ) -> Result<CallToolResult, McpError> {
     let client = kube_api::require_client(manager).await.map_err(tool_error)?;
-    let matrix = k7s_core::kube::rbac_matrix::build_rbac_matrix(client)
+    let matrix = k7s_core::kube::security::rbac_matrix::build_rbac_matrix(client)
         .await
         .map_err(tool_error)?;
     json_result(&matrix)
@@ -179,7 +179,7 @@ pub(crate) async fn network_policy_audit(
 pub(crate) async fn audit_search(
     p: AuditSearchParams,
 ) -> Result<CallToolResult, McpError> {
-    let query = k7s_core::kube::audit::AuditQuery {
+    let query = k7s_core::kube::observability::audit::AuditQuery {
         namespace: String::new(),
         instance: p.instance,
         resource: p.resource.unwrap_or_default(),
@@ -187,7 +187,7 @@ pub(crate) async fn audit_search(
         since_seconds: p.since_seconds.unwrap_or(3600),
         limit: p.limit.unwrap_or(200) as usize,
     };
-    let events = k7s_core::kube::audit::query_audit_events(&query)
+    let events = k7s_core::kube::observability::audit::query_audit_events(&query)
         .await
         .map_err(tool_error)?;
     json_result(&events)
@@ -201,10 +201,10 @@ pub(crate) async fn sbom_generate_image(
     data_dir: &Path,
     p: SbomGenerateParams,
 ) -> Result<CallToolResult, McpError> {
-    let format = k7s_core::kube::sbom::SbomFormat::parse(&p.format)
-        .unwrap_or(k7s_core::kube::sbom::SbomFormat::CycloneDx);
+    let format = k7s_core::kube::security::sbom::SbomFormat::parse(&p.format)
+        .unwrap_or(k7s_core::kube::security::sbom::SbomFormat::CycloneDx);
     let prefs = k7s_core::core::prefs::read_prefs(data_dir);
-    let engine = k7s_core::kube::sbom::SbomEngine::with_prefs(
+    let engine = k7s_core::kube::security::sbom::SbomEngine::with_prefs(
         prefs.scanner_trivy_path.as_deref(),
         prefs.scanner_grype_path.as_deref(),
         prefs.scanner_timeout.as_deref(),
@@ -213,7 +213,7 @@ pub(crate) async fn sbom_generate_image(
         .generate_with_vulns(&p.image_ref, &format)
         .await
         .map_err(tool_error)?;
-    let storage = k7s_core::kube::sbom_storage::SbomStorage::new(data_dir);
+    let storage = k7s_core::kube::security::sbom_storage::SbomStorage::new(data_dir);
     let _ = storage.save(&sbom);
     json_result(&k7s_deps::serde_json::json!({
         "id": sbom.id,
@@ -224,7 +224,7 @@ pub(crate) async fn sbom_generate_image(
 }
 
 pub(crate) async fn sbom_list_history(data_dir: &Path) -> Result<CallToolResult, McpError> {
-    let storage = k7s_core::kube::sbom_storage::SbomStorage::new(data_dir);
+    let storage = k7s_core::kube::security::sbom_storage::SbomStorage::new(data_dir);
     let list = storage.list().map_err(tool_error)?;
     json_result(&list)
 }
@@ -233,7 +233,7 @@ pub(crate) async fn sbom_get(
     data_dir: &Path,
     p: SbomGetParams,
 ) -> Result<CallToolResult, McpError> {
-    let storage = k7s_core::kube::sbom_storage::SbomStorage::new(data_dir);
+    let storage = k7s_core::kube::security::sbom_storage::SbomStorage::new(data_dir);
     let sbom = storage.load(&p.id).map_err(tool_error)?;
     // Serialize via serde to get consistent camelCase keys
     json_result(&k7s_deps::serde_json::to_value(&sbom).map_err(tool_error)?)

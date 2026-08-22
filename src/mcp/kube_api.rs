@@ -775,9 +775,9 @@ pub struct TopNode {
     pub mem_percent: f64,
 }
 
-// Import wire types from the canonical location in kube::metrics instead of
+// Import wire types from the canonical location in kube::observability::metrics instead of
 // duplicating them here.
-use k7s_core::kube::metrics::{MetricsList, NodeMetric, PodMetric};
+use k7s_core::kube::observability::metrics::{MetricsList, NodeMetric, PodMetric};
 
 /// Snapshot of pod usage from metrics.k8s.io. Reuses the Quantity parsers from
 /// `metrics.rs` (already `pub`). Returns pods sorted by CPU desc.
@@ -798,12 +798,12 @@ pub async fn top_pods(client: &Client, namespace: Option<&str>) -> AppResult<Vec
             let cpu: i64 = pm
                 .containers
                 .iter()
-                .map(|c| k7s_core::kube::metrics::parse_cpu_millis(&c.usage.cpu))
+                .map(|c| k7s_core::kube::observability::metrics::parse_cpu_millis(&c.usage.cpu))
                 .sum();
             let mem: i64 = pm
                 .containers
                 .iter()
-                .map(|c| k7s_core::kube::metrics::parse_mem_bytes(&c.usage.memory))
+                .map(|c| k7s_core::kube::observability::metrics::parse_mem_bytes(&c.usage.memory))
                 .sum();
             TopPod {
                 namespace: pm.metadata.namespace,
@@ -835,11 +835,11 @@ pub async fn top_nodes(client: &Client) -> AppResult<Vec<TopNode>> {
             if let Some(a) = &status.allocatable {
                 let cpu = a
                     .get("cpu")
-                    .map(|q| k7s_core::kube::metrics::parse_cpu_millis(&q.0))
+                    .map(|q| k7s_core::kube::observability::metrics::parse_cpu_millis(&q.0))
                     .unwrap_or(0);
                 let mem = a
                     .get("memory")
-                    .map(|q| k7s_core::kube::metrics::parse_mem_bytes(&q.0))
+                    .map(|q| k7s_core::kube::observability::metrics::parse_mem_bytes(&q.0))
                     .unwrap_or(0);
                 alloc.insert(name, (cpu, mem));
             }
@@ -850,8 +850,8 @@ pub async fn top_nodes(client: &Client) -> AppResult<Vec<TopNode>> {
         .items
         .into_iter()
         .map(|nm| {
-            let cpu = k7s_core::kube::metrics::parse_cpu_millis(&nm.usage.cpu);
-            let mem = k7s_core::kube::metrics::parse_mem_bytes(&nm.usage.memory);
+            let cpu = k7s_core::kube::observability::metrics::parse_cpu_millis(&nm.usage.cpu);
+            let mem = k7s_core::kube::observability::metrics::parse_mem_bytes(&nm.usage.memory);
             let (acpu, amem) = alloc.get(&nm.metadata.name).copied().unwrap_or((0, 0));
             TopNode {
                 cpu_percent: pct(cpu, acpu),

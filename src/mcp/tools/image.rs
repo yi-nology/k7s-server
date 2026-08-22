@@ -10,7 +10,7 @@ use std::sync::Arc;
 use rmcp::model::{CallToolResult, ErrorData as McpError};
 
 use k7s_core::error::AppError;
-use k7s_core::kube::{image_archive, image_sync, imagerepo, manager::ClientManager};
+use k7s_core::kube::{image::archive, image::sync, image::repo, manager::ClientManager};
 
 use crate::mcp::helpers::{json_result, tool_error};
 use crate::mcp::params::*;
@@ -22,7 +22,7 @@ use crate::mcp::params::*;
 pub(crate) async fn image_registry_tags(
     p: ImageRegistryRepoParams,
 ) -> Result<CallToolResult, McpError> {
-    let reg = imagerepo::list_registries()
+    let reg = repo::list_registries()
         .map_err(tool_error)?
         .into_iter()
         .find(|r| r.name == p.name)
@@ -32,7 +32,7 @@ pub(crate) async fn image_registry_tags(
                 p.name
             )))
         })?;
-    let tags = imagerepo::list_tags(&reg, &p.repo)
+    let tags = repo::list_tags(&reg, &p.repo)
         .await
         .map_err(tool_error)?;
     json_result(&tags)
@@ -41,7 +41,7 @@ pub(crate) async fn image_registry_tags(
 pub(crate) async fn image_registry_manifest(
     p: ImageRegistryManifestParams,
 ) -> Result<CallToolResult, McpError> {
-    let reg = imagerepo::list_registries()
+    let reg = repo::list_registries()
         .map_err(tool_error)?
         .into_iter()
         .find(|r| r.name == p.name)
@@ -51,7 +51,7 @@ pub(crate) async fn image_registry_manifest(
                 p.name
             )))
         })?;
-    let manifest = imagerepo::manifest(&reg, &p.repo, &p.tag)
+    let manifest = repo::manifest(&reg, &p.repo, &p.tag)
         .await
         .map_err(tool_error)?;
     json_result(&manifest)
@@ -62,7 +62,7 @@ pub(crate) async fn image_registry_manifest(
 // -----------------------------------------------------------------------
 
 pub(crate) async fn image_sync_status() -> Result<CallToolResult, McpError> {
-    let avail = image_sync::check_skopeo().await;
+    let avail = sync::check_skopeo().await;
     json_result(&avail)
 }
 
@@ -76,7 +76,7 @@ pub(crate) async fn image_copy(
     } else {
         Some(p.src_creds.as_str())
     };
-    let result = image_sync::copy_image(
+    let result = sync::copy_image(
         &p.source,
         &p.dest_registry,
         &p.dest_repo,
@@ -94,7 +94,7 @@ pub(crate) async fn image_copy(
 pub(crate) async fn image_inspect_archive(
     p: ImageArchiveParams,
 ) -> Result<CallToolResult, McpError> {
-    let info = image_archive::inspect_archive(&p.tar_path)
+    let info = archive::inspect_archive(&p.tar_path)
         .await
         .map_err(tool_error)?;
     json_result(&info)

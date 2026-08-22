@@ -16,8 +16,7 @@ use rmcp::model::{CallToolResult, ContentBlock, ErrorData as McpError};
 use serde::Serialize;
 
 use k7s_core::error::AppError;
-use k7s_core::kube::{
-    manager::{ClientManager, ForwardDto, ShellSession},
+use k7s_core::kube::{manager::{ClientManager, ForwardDto, ShellSession},
     nodeshell,
     portforward,
 };

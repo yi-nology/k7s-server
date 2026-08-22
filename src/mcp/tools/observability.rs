@@ -10,10 +10,7 @@ use std::sync::Arc;
 use rmcp::model::{CallToolResult, ContentBlock, ErrorData as McpError};
 
 use k7s_core::error::AppError;
-use k7s_core::kube::{
-    alerting, grafana, manager::ClientManager, metrics::parse_cpu_millis,
-    metrics::parse_mem_bytes, metrics_config, saved_queries,
-};
+use k7s_core::kube::{observability::alerting, observability::grafana, manager::ClientManager, observability::metrics::parse_cpu_millis, observability::metrics::parse_mem_bytes, observability::metrics_config, observability::saved_queries};
 
 use crate::mcp::helpers::{json_result, tool_error};
 use crate::mcp::kube_api;

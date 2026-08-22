@@ -13,11 +13,7 @@ use serde::Serialize;
 
 use k7s_core::core::shell_common::validate_apply_yaml;
 use k7s_core::error::AppError;
-use k7s_core::kube::{
-    client as kube_client,
-    drain,
-    endpoints,
-    manager::{ClientManager, ImportedContext},
+use k7s_core::kube::{client as kube_client, drain, endpoints, manager::{ClientManager, ImportedContext},
     templates,
 };
 

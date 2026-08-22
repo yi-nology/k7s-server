@@ -8,8 +8,7 @@ use rmcp::model::{CallToolResult, ContentBlock, ErrorData as McpError};
 use serde::Serialize;
 
 use k7s_core::error::AppError;
-use k7s_core::kube::{
-    manager::{ClientManager, ForwardDto},
+use k7s_core::kube::{manager::{ClientManager, ForwardDto},
     ResourceKind,
 };
 use k7s_deps::kube::Client;

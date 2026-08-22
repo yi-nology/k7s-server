@@ -22,8 +22,7 @@ use k7s_core::core::prefs::{self, Prefs};
 use k7s_core::core::shell_common;
 use k7s_core::core::CoreState;
 use k7s_core::error::{AppError, AppResult};
-use k7s_core::kube::{
-    client::{self, ContextInfo},
+use k7s_core::kube::{client::{self, ContextInfo},
     manager::ImportedContext,
 };
 
@@ -194,12 +193,12 @@ pub async fn sbom_generate_image(
 ) -> axum::response::Response {
     let image_ref = req["image_ref"].as_str().unwrap_or("").to_string();
     let format_str = req["format"].as_str().unwrap_or("cyclonedx");
-    let format = k7s_core::kube::sbom::SbomFormat::parse(format_str)
-        .unwrap_or(k7s_core::kube::sbom::SbomFormat::CycloneDx);
+    let format = k7s_core::kube::security::sbom::SbomFormat::parse(format_str)
+        .unwrap_or(k7s_core::kube::security::sbom::SbomFormat::CycloneDx);
 
     let engine = {
         let p = prefs::read_prefs(&state.core.data_dir);
-        k7s_core::kube::sbom::SbomEngine::with_prefs(
+        k7s_core::kube::security::sbom::SbomEngine::with_prefs(
             p.scanner_trivy_path.as_deref(),
             p.scanner_grype_path.as_deref(),
             p.scanner_timeout.as_deref(),
@@ -207,7 +206,7 @@ pub async fn sbom_generate_image(
     };
     let result: AppResult<_> = async {
         let sbom = engine.generate_with_vulns(&image_ref, &format).await?;
-        let storage = k7s_core::kube::sbom_storage::SbomStorage::new(&state.core.data_dir);
+        let storage = k7s_core::kube::security::sbom_storage::SbomStorage::new(&state.core.data_dir);
         storage.save(&sbom)?;
         Ok(sbom)
     }
@@ -217,7 +216,7 @@ pub async fn sbom_generate_image(
 
 /// `GET /api/sbom/history` — List SBOM scan history.
 pub async fn sbom_list_history(State(state): State<WebState>) -> axum::response::Response {
-    let storage = k7s_core::kube::sbom_storage::SbomStorage::new(&state.core.data_dir);
+    let storage = k7s_core::kube::security::sbom_storage::SbomStorage::new(&state.core.data_dir);
     respond(storage.list())
 }
 
@@ -226,7 +225,7 @@ pub async fn sbom_get(
     State(state): State<WebState>,
     Path(id): Path<String>,
 ) -> axum::response::Response {
-    let storage = k7s_core::kube::sbom_storage::SbomStorage::new(&state.core.data_dir);
+    let storage = k7s_core::kube::security::sbom_storage::SbomStorage::new(&state.core.data_dir);
     respond(storage.load(&id))
 }
 

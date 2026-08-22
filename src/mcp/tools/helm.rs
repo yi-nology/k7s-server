@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use rmcp::model::{CallToolResult, ContentBlock, ErrorData as McpError};
 
-use k7s_core::kube::{helm_market, helm_ops, manager::ClientManager};
+use k7s_core::kube::{helm::market, helm::ops, manager::ClientManager};
 
 use crate::mcp::helpers::{json_result, tool_error};
 use crate::mcp::kube_api;
@@ -27,7 +27,7 @@ pub(crate) async fn helm_install(
     p: HelmInstallParams,
 ) -> Result<CallToolResult, McpError> {
     let sink = manager.sink();
-    let op = helm_ops::HelmOp::Install(helm_ops::InstallArgs {
+    let op = ops::HelmOp::Install(ops::InstallArgs {
         release: p.release,
         chart: p.chart,
         version: p.version,
@@ -37,7 +37,7 @@ pub(crate) async fn helm_install(
         dry_run: p.dry_run,
         create_namespace: p.create_namespace,
     });
-    let result = helm_ops::run_op(op, sink).await.map_err(tool_error)?;
+    let result = ops::run_op(op, sink).await.map_err(tool_error)?;
     json_result(&result)
 }
 
@@ -46,7 +46,7 @@ pub(crate) async fn helm_upgrade(
     p: HelmUpgradeParams,
 ) -> Result<CallToolResult, McpError> {
     let sink = manager.sink();
-    let op = helm_ops::HelmOp::Upgrade(helm_ops::UpgradeArgs {
+    let op = ops::HelmOp::Upgrade(ops::UpgradeArgs {
         release: p.release,
         chart: p.chart,
         version: p.version,
@@ -57,7 +57,7 @@ pub(crate) async fn helm_upgrade(
         reuse_values: p.reuse_values,
         rollback_on_failure: p.rollback_on_failure,
     });
-    let result = helm_ops::run_op(op, sink).await.map_err(tool_error)?;
+    let result = ops::run_op(op, sink).await.map_err(tool_error)?;
     json_result(&result)
 }
 
@@ -66,13 +66,13 @@ pub(crate) async fn helm_uninstall(
     p: HelmUninstallParams,
 ) -> Result<CallToolResult, McpError> {
     let sink = manager.sink();
-    let op = helm_ops::HelmOp::Uninstall(helm_ops::UninstallArgs {
+    let op = ops::HelmOp::Uninstall(ops::UninstallArgs {
         release: p.release,
         namespace: p.namespace,
         kubeconfig: None,
         keep_history: p.keep_history,
     });
-    let result = helm_ops::run_op(op, sink).await.map_err(tool_error)?;
+    let result = ops::run_op(op, sink).await.map_err(tool_error)?;
     json_result(&result)
 }
 
@@ -81,20 +81,20 @@ pub(crate) async fn helm_rollback(
     p: HelmRollbackParams,
 ) -> Result<CallToolResult, McpError> {
     let sink = manager.sink();
-    let op = helm_ops::HelmOp::Rollback(helm_ops::RollbackArgs {
+    let op = ops::HelmOp::Rollback(ops::RollbackArgs {
         release: p.release,
         namespace: p.namespace,
         revision: p.revision,
         kubeconfig: None,
     });
-    let result = helm_ops::run_op(op, sink).await.map_err(tool_error)?;
+    let result = ops::run_op(op, sink).await.map_err(tool_error)?;
     json_result(&result)
 }
 
 pub(crate) async fn helm_history(
     p: HelmHistoryParams,
 ) -> Result<CallToolResult, McpError> {
-    let rows = helm_ops::release_history(&p.release, &p.namespace, None)
+    let rows = ops::release_history(&p.release, &p.namespace, None)
         .await
         .map_err(tool_error)?;
     json_result(&rows)
@@ -127,7 +127,7 @@ pub(crate) async fn helm_values_revision(
 pub(crate) async fn helm_show_values(
     p: HelmShowValuesParams,
 ) -> Result<CallToolResult, McpError> {
-    let values = helm_ops::render_default_values(&p.chart, &p.version, None)
+    let values = ops::render_default_values(&p.chart, &p.version, None)
         .await
         .map_err(tool_error)?;
     Ok(CallToolResult::success(vec![ContentBlock::text(values)]))
@@ -138,29 +138,29 @@ pub(crate) async fn helm_show_values(
 // -----------------------------------------------------------------------
 
 pub(crate) async fn helm_list_repos() -> Result<CallToolResult, McpError> {
-    let repos = helm_market::list_repos().map_err(tool_error)?;
+    let repos = market::list_repos().map_err(tool_error)?;
     json_result(&repos)
 }
 
 pub(crate) async fn helm_search_charts(
     p: HelmSearchParams,
 ) -> Result<CallToolResult, McpError> {
-    let charts = helm_market::search_charts(&p.query).map_err(tool_error)?;
+    let charts = market::search_charts(&p.query).map_err(tool_error)?;
     json_result(&charts)
 }
 
 pub(crate) async fn helm_add_repo(p: HelmRepoParams) -> Result<CallToolResult, McpError> {
-    let repo = helm_market::add_repo(&p.name, &p.url, &p.description).map_err(tool_error)?;
+    let repo = market::add_repo(&p.name, &p.url, &p.description).map_err(tool_error)?;
     json_result(&repo)
 }
 
 pub(crate) async fn helm_remove_repo(p: HelmRepoNameParams) -> Result<CallToolResult, McpError> {
-    helm_market::remove_repo(&p.name).map_err(tool_error)?;
+    market::remove_repo(&p.name).map_err(tool_error)?;
     Ok(CallToolResult::success(vec![ContentBlock::text("removed")]))
 }
 
 pub(crate) async fn helm_update_repo(p: HelmRepoNameParams) -> Result<CallToolResult, McpError> {
-    let repo = helm_market::update_repo_index(&p.name)
+    let repo = market::update_repo_index(&p.name)
         .await
         .map_err(tool_error)?;
     json_result(&repo)
