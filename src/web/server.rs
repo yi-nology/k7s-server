@@ -40,8 +40,6 @@ use tower_http::trace::TraceLayer;
 
 use super::auth_password;
 use super::handlers;
-use super::resource_handlers;
-use super::shell_handlers;
 use super::sse::events_handler;
 use super::state::WebState;
 use crate::mcp::K7sMcpServer;
@@ -139,35 +137,8 @@ pub fn api_router(state: WebState) -> Router {
         );
 
     Router::new()
-        .route("/api/invoke/list_contexts", post(handlers::list_contexts))
-        .route(
-            "/api/invoke/default_kubeconfig_path",
-            post(handlers::default_kubeconfig_path),
-        )
         .route("/api/invoke/load_prefs", post(handlers::load_prefs))
         .route("/api/invoke/save_prefs", post(handlers::save_prefs))
-        .route("/api/invoke/connect", post(handlers::connect))
-        .route("/api/invoke/get_yaml", post(resource_handlers::get_yaml))
-        .route(
-            "/api/invoke/helm_manifest_revision",
-            post(resource_handlers::helm_manifest_revision),
-        )
-        .route(
-            "/api/invoke/helm_values_revision",
-            post(resource_handlers::helm_values_revision),
-        )
-        .route(
-            "/api/invoke/get_events",
-            post(resource_handlers::get_events),
-        )
-        .route(
-            "/api/invoke/get_properties",
-            post(resource_handlers::get_properties),
-        )
-        .route(
-            "/api/invoke/get_secret_data",
-            post(resource_handlers::get_secret_data),
-        )
         // Browser equivalent of the Tauri file-picker dialog: the user
         // picks a kubeconfig file in the browser, the front-end reads its
         // bytes and POSTs the contents here. See HttpProvider.importKubeconfig.
@@ -179,129 +150,18 @@ pub fn api_router(state: WebState) -> Router {
         // reachable over HTTP. Added in batches as the Tauri commands grew
         // their own contracts; the catch-all below still 501s anything we
         // haven't bridged.
-        .route(
-            "/api/invoke/apply_yaml",
-            post(resource_handlers::apply_yaml),
-        )
-        .route(
-            "/api/invoke/dry_run_yaml",
-            post(resource_handlers::dry_run_yaml),
-        )
-        .route(
-            "/api/invoke/dry_run_yaml_bundle",
-            post(resource_handlers::dry_run_yaml_bundle),
-        )
-        .route(
-            "/api/invoke/apply_yaml_bundle",
-            post(resource_handlers::apply_yaml_bundle),
-        )
-        .route(
-            "/api/invoke/delete_resource",
-            post(resource_handlers::delete_resource),
-        )
-        .route(
-            "/api/invoke/scale_resource",
-            post(resource_handlers::scale_resource),
-        )
-        .route(
-            "/api/invoke/set_cordon",
-            post(resource_handlers::set_cordon),
-        )
-        .route(
-            "/api/invoke/restart_pod",
-            post(resource_handlers::restart_pod),
-        )
-        .route(
-            "/api/invoke/diagnose_pod",
-            post(resource_handlers::diagnose_pod),
-        )
-        .route(
-            "/api/invoke/restart_rollout",
-            post(resource_handlers::restart_rollout),
-        )
-        .route(
-            "/api/invoke/list_revisions",
-            post(resource_handlers::list_revisions),
-        )
-        .route(
-            "/api/invoke/undo_rollout",
-            post(resource_handlers::undo_rollout),
-        )
-        .route(
-            "/api/invoke/drain_node",
-            post(resource_handlers::drain_node),
-        )
         // Log streaming — the headline feature the previous 501 broke. Lines
         // flow through the same `EventSink` → SSE path the watchers use.
-        .route(
-            "/api/invoke/start_log_stream",
-            post(shell_handlers::start_log_stream),
-        )
-        .route(
-            "/api/invoke/stop_log_stream",
-            post(shell_handlers::stop_log_stream),
-        )
-        .route("/api/invoke/export_logs", post(shell_handlers::export_logs))
         // Interactive shells — exec over SSE, input/resize/stop as POSTs.
         // Same wire names as the Tauri commands so the front-end can swap
         // providers unchanged. `shell-out:{id}` / `shell-closed:{id}` events
         // come through the existing `/api/events` SSE stream.
-        .route("/api/invoke/start_shell", post(shell_handlers::start_shell))
-        .route("/api/invoke/shell_input", post(shell_handlers::shell_input))
-        .route(
-            "/api/invoke/shell_resize",
-            post(shell_handlers::shell_resize),
-        )
-        .route("/api/invoke/stop_shell", post(shell_handlers::stop_shell))
-        .route(
-            "/api/invoke/start_node_shell",
-            post(shell_handlers::start_node_shell),
-        )
-        .route(
-            "/api/invoke/stop_node_shell",
-            post(shell_handlers::stop_node_shell),
-        )
         // EndpointSlices — for the topology graph.
-        .route(
-            "/api/invoke/list_endpoints",
-            post(resource_handlers::list_endpoints),
-        )
-        .route(
-            "/api/invoke/list_endpoints_for_service",
-            post(resource_handlers::list_endpoints_for_service),
-        )
-        .route(
-            "/api/invoke/list_endpoint_addresses",
-            post(resource_handlers::list_endpoint_addresses),
-        )
         // SBOM endpoints (REST-style).
         .route("/api/sbom/image", post(handlers::sbom_generate_image))
         .route("/api/sbom/history", get(handlers::sbom_list_history))
         .route("/api/sbom/{id}", get(handlers::sbom_get))
         // SBOM invoke bridges — the frontend calls POST /api/invoke/sbom_*.
-        .route(
-            "/api/invoke/sbom_generate_image",
-            post(handlers::sbom_generate_image),
-        )
-        .route(
-            "/api/invoke/sbom_list_history",
-            post(handlers::sbom_list_history),
-        )
-        .route("/api/invoke/sbom_get", post(handlers::sbom_get_invoke))
-        .route(
-            "/api/invoke/sbom_generate_cluster",
-            post(handlers::sbom_generate_cluster),
-        )
-        .route("/api/invoke/sbom_export", post(handlers::sbom_export))
-        .route(
-            "/api/invoke/security_audit_run",
-            post(handlers::security_audit_run),
-        )
-        .route(
-            "/api/invoke/rbac_permission_matrix",
-            post(handlers::rbac_permission_matrix),
-        )
-        .route("/api/invoke/scanner_status", post(handlers::scanner_status))
         // AI webhook hooks — external systems (monitoring, CI/CD) can trigger
         // the AI agent via these endpoints. Authenticated via Bearer token.
         .route("/hooks/wake", post(handlers::hook_wake))
@@ -395,7 +255,7 @@ pub fn api_router(state: WebState) -> Router {
             post(handlers::ai_cron_delete_handler),
         )
         // Stubs for everything else.
-        .route("/api/invoke/{cmd}", post(handlers::not_implemented))
+        .route("/api/invoke/{cmd}", post(handlers::invoke_registry))
         // Connection banner polling. `GET` (no body) so a misbehaving client
         // can't accidentally trigger a state change by retrying.
         .route("/api/status", get(handlers::status))

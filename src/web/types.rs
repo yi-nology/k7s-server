@@ -66,46 +66,11 @@ pub(super) fn respond<T: Serialize>(r: AppResult<T>) -> axum::response::Response
 // Request-body structs (the JSON the front-end POSTs for each command).
 // ---------------------------------------------------------------------------
 
-#[derive(Deserialize)]
-pub struct ConnectArgs {
-    pub context: String,
-}
 
-#[derive(Deserialize)]
-pub struct GetYamlArgs {
-    pub kind: String,
-    pub namespace: String,
-    pub name: String,
-}
 
-#[derive(Deserialize)]
-pub struct GetEventsArgs {
-    pub kind: String,
-    pub namespace: String,
-    pub name: String,
-}
 
-#[derive(Deserialize)]
-pub struct GetPropertiesArgs {
-    pub kind: String,
-    pub namespace: String,
-    pub name: String,
-}
 
-#[derive(Deserialize)]
-pub struct GetSecretDataArgs {
-    pub namespace: String,
-    pub name: String,
-}
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ApplyYamlArgs {
-    pub kind: String,
-    pub namespace: String,
-    pub name: String,
-    pub yaml: String,
-}
 
 #[derive(Deserialize)]
 pub struct SavePrefsArgs {
@@ -128,68 +93,13 @@ pub struct ImportKubeconfigContentArgs {
     pub contents: String,
 }
 
-#[derive(Deserialize, Default)]
-pub struct EmptyArgs {}
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct StartLogStreamArgs {
-    pub namespace: String,
-    pub pod: String,
-    pub container: String,
-    pub tail: Option<i64>,
-    pub since_time: Option<String>,
-    pub since_seconds: Option<i64>,
-    pub previous: bool,
-}
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct StopLogStreamArgs {
-    pub stream_id: String,
-}
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ExportLogsArgs {
-    pub namespace: String,
-    pub pod: String,
-    pub container: String,
-    pub since_seconds: Option<i64>,
-    pub previous: bool,
-    pub path: String,
-}
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DeleteResourceArgs {
-    pub kind: String,
-    pub namespace: String,
-    pub name: String,
-}
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ScaleResourceArgs {
-    pub kind: String,
-    pub namespace: String,
-    pub name: String,
-    pub replicas: i32,
-}
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SetCordonArgs {
-    pub name: String,
-    pub unschedulable: bool,
-}
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RestartPodArgs {
-    pub namespace: String,
-    pub name: String,
-}
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -198,13 +108,6 @@ pub struct DiagnosePodArgs {
     pub pod: String,
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RestartRolloutArgs {
-    pub kind: String,
-    pub namespace: String,
-    pub name: String,
-}
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -214,29 +117,8 @@ pub struct ListRevisionsArgs {
     pub name: String,
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct UndoRolloutArgs {
-    pub kind: String,
-    pub namespace: String,
-    pub name: String,
-    /// None = roll back to the previous revision (kubectl rollout undo default).
-    pub to_revision: Option<i64>,
-}
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DrainNodeArgs {
-    pub name: String,
-}
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct StartShellArgs {
-    pub namespace: String,
-    pub pod: String,
-    pub container: String,
-}
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -253,33 +135,9 @@ pub struct ShellResizeArgs {
     pub rows: u16,
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct StopShellArgs {
-    pub stream_id: String,
-}
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct StartNodeShellArgs {
-    pub node: String,
-}
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct StopNodeShellArgs {
-    pub stream_id: String,
-    pub pod: String,
-}
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DryRunYamlArgs {
-    pub kind: String,
-    pub namespace: String,
-    pub name: String,
-    pub yaml: String,
-}
 
 /// Args for `dry_run_yaml_bundle` — just the multi-doc YAML string. Each
 /// document's apiVersion/kind/namespace/name are read from the doc itself.
@@ -290,10 +148,6 @@ pub struct DryRunYamlBundleArgs {
 
 /// Args for `apply_yaml_bundle` — the create-apply counterpart of
 /// `DryRunYamlBundleArgs`. Same shape: the whole multi-doc YAML string.
-#[derive(Debug, Deserialize)]
-pub struct ApplyYamlBundleArgs {
-    pub yaml: String,
-}
 
 // ---------------------------------------------------------------------------
 // Wire DTOs — serialisable shapes returned by specific handlers.
@@ -318,38 +172,9 @@ pub struct ImportResultWire {
     pub path: String,
 }
 
-#[derive(Serialize)]
-pub struct WireEvent {
-    #[serde(rename = "type")]
-    pub ty: String,
-    pub reason: String,
-    pub message: String,
-    pub count: i32,
-    /// Pre-formatted age (e.g. "2m"); we don't try to be exact since the
-    /// front-end just renders the string.
-    pub age: String,
-    /// Last-seen time (RFC3339), for the EventsTab time-range filter.
-    #[serde(rename = "lastTimestamp", skip_serializing_if = "Option::is_none")]
-    pub last_timestamp: Option<String>,
-}
 
-#[derive(Serialize)]
-pub struct WireSecretEntry {
-    pub key: String,
-    pub value: String,
-}
 
-#[derive(Deserialize)]
-pub struct ListEndpointsForServiceArgs {
-    pub namespace: String,
-    pub name: String,
-}
 
-#[derive(Deserialize)]
-pub struct ListEndpointAddressesArgs {
-    pub namespace: String,
-    pub name: String,
-}
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]

@@ -46,6 +46,10 @@ pub struct WebState {
     /// Data dir, kept next to `core` for the password-file path. The auth
     /// handlers persist the argon2 hash to `<data_dir>/web-password`.
     pub data_dir: std::path::PathBuf,
+    /// The shared command registry — the same table the Tauri shells use.
+    /// `POST /api/invoke/{cmd}` dispatches through it for every non-AI
+    /// command; AI keeps its bespoke handlers.
+    pub registry: std::sync::Arc<k7s_core::core::commands::CommandRegistry>,
 }
 
 impl WebState {
@@ -75,8 +79,10 @@ impl WebState {
             &core.data_dir,
         )));
         let data_dir = core.data_dir.clone();
+        let registry = std::sync::Arc::new(k7s_commands::registry::build_registry());
 
         Self {
+            registry,
             core,
             event_tx,
             ai_runs: Arc::new(Mutex::new(HashMap::new())),

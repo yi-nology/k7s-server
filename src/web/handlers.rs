@@ -21,9 +21,8 @@ use k7s_core::core::shell_common;
 use k7s_core::core::CoreState;
 use k7s_core::error::{AppError, AppResult};
 use k7s_core::kube::{
-    client::{self, ClusterInfo, ContextInfo},
-    manager::{ConnectionInfo, ImportedContext},
-    watchers,
+    client::{self, ContextInfo},
+    manager::ImportedContext,
 };
 
 use super::state::WebState;
@@ -33,12 +32,6 @@ use super::types::*;
 // list_contexts
 // ---------------------------------------------------------------------------
 
-/// `POST /invoke/list_contexts` — list kubeconfig contexts (with imports).
-pub async fn list_contexts(State(state): State<WebState>) -> axum::response::Response {
-    let core = state.core.clone();
-    let result = shell_common::merged_contexts(&core.manager).await;
-    respond(Ok(result))
-}
 
 // ---------------------------------------------------------------------------
 // default_kubeconfig_path
@@ -166,78 +159,11 @@ pub async fn import_kubeconfig_content(
 // connect
 // ---------------------------------------------------------------------------
 
-/// `POST /invoke/connect` — tear down the current connection, build a
-/// client for the requested context, start all watchers and pollers.
-pub async fn connect(
-    State(state): State<WebState>,
-    Json(args): Json<ConnectArgs>,
-) -> axum::response::Response {
-    let core = state.core.clone();
-    let result: AppResult<ClusterInfo> = (|| async {
-        let context = args.context;
-
-        // Shared connection sequence: reset -> build client -> probe version ->
-        // discover CRDs. The web shell may have an imported kubeconfig in memory.
-        let imported = core.manager.import_kubeconfig(&context).await;
-        let import_path = core.manager.import_path(&context).await;
-        let cr = shell_common::connect_core(&core.manager, imported, import_path, &context).await?;
-
-        // Watchers for all built-in kinds (B1).
-        let watcher_count = watchers::spawn_all(&core.manager, cr.client.clone()).await;
-
-        // Metrics + status pollers (B23). Read intervals from prefs at connect,
-        // so a settings change takes effect on the next connection.
-        let pi = prefs::poll_intervals(&prefs::read_prefs(&core.data_dir));
-        let (metrics_task, status_task) =
-            k7s_core::kube::metrics::spawn_pollers(core.manager.sink(), cr.client.clone(), pi);
-        let _ = core.manager.push_task(metrics_task).await;
-        let _ = core.manager.push_task(status_task).await;
-
-        // Tell the frontend about CRD-backed kinds (discovered inside connect_core).
-        let _ = core
-            .manager
-            .sink()
-            .emit(k7s_core::kube::events::CUSTOM_KINDS, &cr.custom_kinds);
-
-        // Record the live connection with the real watcher count.
-        let _ = core
-            .manager
-            .set_connected(
-                cr.client,
-                ConnectionInfo {
-                    context: context.clone(),
-                    server: cr.server.clone(),
-                    version: cr.version.clone(),
-                },
-                watcher_count,
-            )
-            .await;
-
-        Ok(ClusterInfo {
-            context: context.clone(),
-            cluster_name: context,
-            server: cr.server,
-            version: cr.version,
-        })
-    })()
-    .await;
-    respond(result)
-}
 
 // ---------------------------------------------------------------------------
 // Catch-all stub for unimplemented commands.
 // ---------------------------------------------------------------------------
 
-/// Catch-all for commands we haven't bridged yet. Returns a 501 + a clear
-/// error so the front-end knows the call is unimplemented (rather than
-/// silently mis-routing).
-pub async fn not_implemented() -> axum::response::Response {
-    InvokeError {
-        ok: false,
-        error: "this command isn't bridged through the web shell yet".to_string(),
-    }
-    .into_response()
-}
 
 // ---------------------------------------------------------------------------
 // Helpers (re-implementations of the small bits commands.rs's connect/get_yaml
@@ -302,131 +228,11 @@ pub async fn sbom_get(
     respond(storage.load(&id))
 }
 
-/// `POST /api/invoke/sbom_get` — Get SBOM by ID (invoke bridge).
-/// Reads `id` from the JSON body instead of the URL path.
-pub async fn sbom_get_invoke(
-    State(state): State<WebState>,
-    Json(req): Json<k7s_deps::serde_json::Value>,
-) -> axum::response::Response {
-    let id = req["id"].as_str().unwrap_or("").to_string();
-    let storage = k7s_core::kube::sbom_storage::SbomStorage::new(&state.core.data_dir);
-    respond(storage.load(&id))
-}
 
-/// `POST /api/invoke/sbom_generate_cluster` — Generate cluster-wide SBOM.
-pub async fn sbom_generate_cluster(
-    State(state): State<WebState>,
-    Json(req): Json<k7s_deps::serde_json::Value>,
-) -> axum::response::Response {
-    let format_str = req["format"].as_str().unwrap_or("cyclonedx");
-    let _format = k7s_core::kube::sbom::SbomFormat::parse(format_str)
-        .unwrap_or(k7s_core::kube::sbom::SbomFormat::CycloneDx);
 
-    let result: AppResult<k7s_core::kube::sbom::SbomResult> = async {
-        let _client = core_client(&state.core).await?;
-        // For now, just scan the first image found. Full cluster scan TBD.
-        Err(k7s_core::error::AppError::Other(
-            "Cluster-wide SBOM scan not yet implemented. Use image scan instead.".to_string(),
-        ))
-    }
-    .await;
-    respond(result)
-}
 
-/// `POST /api/invoke/sbom_export` — Export an SBOM to a file.
-pub async fn sbom_export(
-    State(state): State<WebState>,
-    Json(req): Json<k7s_deps::serde_json::Value>,
-) -> axum::response::Response {
-    let id = req["id"].as_str().unwrap_or("").to_string();
-    let output_path = req["output_path"].as_str().unwrap_or("").to_string();
 
-    let result: AppResult<String> = (|| async {
-        let canonical_path =
-            k7s_core::kube::sbom_storage::validate_export_path(&output_path, &state.core.data_dir)?;
 
-        let storage = k7s_core::kube::sbom_storage::SbomStorage::new(&state.core.data_dir);
-        let sbom = storage.load(&id)?;
-        let content = k7s_deps::serde_json::to_string_pretty(&sbom)
-            .map_err(|e| k7s_core::error::AppError::Other(format!("serialize sbom: {e}")))?;
-        std::fs::write(&canonical_path, content)
-            .map_err(|e| k7s_core::error::AppError::Other(format!("write file: {e}")))?;
-        Ok(canonical_path.to_string_lossy().to_string())
-    })()
-    .await;
-    respond(result)
-}
-
-/// `POST /api/invoke/security_audit_run` — Run an RBAC security audit.
-pub async fn security_audit_run(State(state): State<WebState>) -> axum::response::Response {
-    let result: AppResult<_> = async {
-        let client = core_client(&state.core).await?;
-        k7s_core::kube::security_audit::run_audit(client).await
-    }
-    .await;
-    respond(result)
-}
-
-/// `POST /api/invoke/rbac_permission_matrix` — Build the RBAC permission matrix.
-pub async fn rbac_permission_matrix(State(state): State<WebState>) -> axum::response::Response {
-    let result: AppResult<_> = async {
-        let client = core_client(&state.core).await?;
-        k7s_core::kube::rbac_matrix::build_rbac_matrix(client).await
-    }
-    .await;
-    respond(result)
-}
-
-/// `POST /api/invoke/scanner_status` — Return scanner engine availability.
-pub async fn scanner_status(State(state): State<WebState>) -> axum::response::Response {
-    let prefs = prefs::read_prefs(&state.core.data_dir);
-    let (trivy_path, trivy_source) =
-        k7s_core::kube::image_scan::resolve_trivy(prefs.scanner_trivy_path.as_deref());
-    let (grype_path, grype_source) =
-        k7s_core::kube::image_scan::resolve_grype(prefs.scanner_grype_path.as_deref());
-
-    let active_engine = if trivy_path.is_some() {
-        "trivy"
-    } else if grype_path.is_some() {
-        "grype"
-    } else {
-        "native"
-    };
-
-    let timeout = prefs
-        .scanner_timeout
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| "5m".to_string());
-
-    let status = k7s_core::kube::image_scan::ScannerStatus {
-        engines: vec![
-            k7s_core::kube::image_scan::ScannerEngineInfo {
-                name: "trivy".to_string(),
-                available: trivy_path.is_some(),
-                path: trivy_path,
-                configurable: true,
-                path_source: trivy_source,
-            },
-            k7s_core::kube::image_scan::ScannerEngineInfo {
-                name: "grype".to_string(),
-                available: grype_path.is_some(),
-                path: grype_path,
-                configurable: true,
-                path_source: grype_source,
-            },
-            k7s_core::kube::image_scan::ScannerEngineInfo {
-                name: "native".to_string(),
-                available: true,
-                path: None,
-                configurable: false,
-                path_source: "built-in".to_string(),
-            },
-        ],
-        active_engine: active_engine.to_string(),
-        timeout,
-    };
-    respond(Ok(status))
-}
 
 // ---------------------------------------------------------------------------
 // Helpers (re-implementations of the small bits commands.rs's connect/get_yaml
@@ -1152,4 +958,47 @@ pub async fn web_token(State(state): State<WebState>) -> axum::response::Respons
             .expect("Response::builder with hardcoded status and body is infallible");
     }
     Json(k7s_deps::serde_json::json!({ "token": *state.web_token })).into_response()
+}
+
+// ---------------------------------------------------------------------------
+// Dynamic /invoke dispatch — everything except the bespoke handlers above.
+// ---------------------------------------------------------------------------
+
+
+// ---------------------------------------------------------------------------
+// Dynamic /invoke dispatch — everything except the bespoke handlers above.
+// ---------------------------------------------------------------------------
+
+/// `POST /api/invoke/{cmd}` — dispatch through the shared command registry.
+///
+/// Explicit routes registered earlier in the router (prefs, kubeconfig import,
+/// the AI surface) win over this catch-all; everything else resolves here
+/// against the same table the Tauri shells compile in, so a command only
+/// needs one implementation to be reachable from both transports.
+pub async fn invoke_registry(
+    axum::extract::Path(cmd): axum::extract::Path<String>,
+    axum::extract::State(state): axum::extract::State<WebState>,
+    body: axum::body::Bytes,
+) -> axum::response::Response {
+    let Some(handler) = state.registry.get(&cmd) else {
+        return respond::<k7s_deps::serde_json::Value>(Err(AppError::NotFound(format!(
+            "unknown command `{cmd}`"
+        ))));
+    };
+    let args: k7s_deps::serde_json::Value = if body.is_empty() {
+        k7s_deps::serde_json::Value::Object(Default::default())
+    } else {
+        match k7s_deps::serde_json::from_slice(&body) {
+            Ok(v) => v,
+            Err(e) => {
+                return respond::<k7s_deps::serde_json::Value>(Err(AppError::Other(format!(
+                    "invalid JSON body: {e}"
+                ))))
+            }
+        }
+    };
+    match handler(state.core.clone(), args).await {
+        Ok(v) => respond::<k7s_deps::serde_json::Value>(Ok(v)),
+        Err(e) => respond::<k7s_deps::serde_json::Value>(Err(e)),
+    }
 }

@@ -13,6 +13,8 @@ crate-type = ["rlib"]
 [dependencies]
 k7s-deps.workspace = true
 k7s-core.workspace = true
+# The shared command registry (web dispatch) — pulls the tauri command surface.
+k7s-commands = { path = "../k7s-commands", optional = true }
 
 serde.workspace = true
 thiserror.workspace = true
@@ -39,7 +41,7 @@ local-ip-address.workspace = true
 hostname.workspace = true
 
 [features]
-web = ["dep:axum", "dep:tower", "dep:tower-http", "tower-http/fs", "dep:rmcp", "dep:schemars", "rmcp/transport-streamable-http-server", "dep:rust-embed", "dep:open", "dep:mime_guess"]
+web = ["dep:axum", "dep:tower", "dep:tower-http", "dep:k7s-commands", "tower-http/fs", "dep:rmcp", "dep:schemars", "rmcp/transport-streamable-http-server", "dep:rust-embed", "dep:open", "dep:mime_guess"]
 mcp = ["dep:rmcp", "dep:schemars"]
 
 [[bin]]
@@ -51,3 +53,7 @@ required-features = ["web"]
 name = "k7s-mcp"
 path = "src/bin/k7s-mcp.rs"
 required-features = ["mcp"]
+
+[dev-dependencies]
+tower = { workspace = true }
+http-body-util = { workspace = true }
