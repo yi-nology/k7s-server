@@ -266,6 +266,7 @@ pub fn api_router(state: WebState) -> Router {
         .route("/api/status", get(handlers::status))
         .route("/api/events", get(events_handler))
         .route("/api/health", get(|| async { "ok" }))
+        .route("/api/version", get(handlers::version))
         .route("/health", get(|| async { "ok" }))
         // Loopback-only: publish the auth token so the same-origin SPA can
         // self-serve it. The handler double-checks `is_loopback` and 404s

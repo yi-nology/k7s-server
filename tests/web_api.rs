@@ -829,3 +829,52 @@ async fn invoke_registry_reports_bad_arguments() {
         .unwrap_or_default()
         .contains("bad arguments"));
 }
+
+/// `/api/version` reports the server crate version behind the auth gate.
+#[tokio::test]
+async fn version_endpoint_reports_version() {
+    let state = make_state();
+    let app = k7s_server::web::server::api_router(state.clone());
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .method("GET")
+                .uri("/api/version")
+                .header(
+                    axum::http::header::AUTHORIZATION,
+                    format!("Bearer {}", auth_token(&state)),
+                )
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    let body = body_json(response).await;
+    assert_eq!(body.get("ok").and_then(|v| v.as_bool()), Some(true));
+    let data = body.get("data").unwrap();
+    assert!(data.get("version").and_then(|v| v.as_str()).is_some());
+    assert_eq!(data.get("bin").and_then(|v| v.as_str()), Some("k7s-web"));
+}
+
+/// Without a token the version endpoint is rejected like other /api routes.
+#[tokio::test]
+async fn version_endpoint_requires_token() {
+    let state = make_state();
+    let app = k7s_server::web::server::api_router(state);
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .method("GET")
+                .uri("/api/version")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), axum::http::StatusCode::UNAUTHORIZED);
+}

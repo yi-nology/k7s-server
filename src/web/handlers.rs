@@ -280,3 +280,15 @@ pub async fn invoke_registry(
         Err(e) => respond::<k7s_deps::serde_json::Value>(Err(e)),
     }
 }
+
+// ---------------------------------------------------------------------------
+// version — build/version info for the UI and ops tooling
+// ---------------------------------------------------------------------------
+
+/// `GET /api/version` — the server's crate version (auth-protected).
+pub async fn version() -> axum::response::Response {
+    respond(Ok(k7s_deps::serde_json::json!({
+        "version": env!("CARGO_PKG_VERSION"),
+        "bin": "k7s-web",
+    })))
+}
