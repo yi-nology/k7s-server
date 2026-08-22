@@ -49,7 +49,7 @@ use crate::mcp::K7sMcpServer;
 /// The built React app embedded at compile time. Only available when the
 /// `web` feature is active and `rust-embed` is linked.
 #[derive(rust_embed::Embed)]
-#[folder = "../../dist"]
+#[folder = "./dist"]
 pub struct FrontendAssets;
 
 /// Axum fallback handler that serves embedded frontend assets.
