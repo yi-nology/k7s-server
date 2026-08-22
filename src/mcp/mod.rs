@@ -36,6 +36,9 @@ mod params;
 mod helpers;
 
 #[cfg(any(feature = "mcp", feature = "web"))]
+pub(crate) mod tools;
+
+#[cfg(any(feature = "mcp", feature = "web"))]
 pub mod server;
 
 #[cfg(any(feature = "mcp", feature = "web"))]

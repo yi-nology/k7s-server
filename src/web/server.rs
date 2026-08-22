@@ -38,8 +38,10 @@ use tower_http::cors::CorsLayer;
 use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
 
+use super::ai_handlers;
 use super::auth_password;
 use super::handlers;
+use super::hook_handlers;
 use super::sse::events_handler;
 use super::state::WebState;
 use crate::mcp::K7sMcpServer;
@@ -164,95 +166,95 @@ pub fn api_router(state: WebState) -> Router {
         // SBOM invoke bridges — the frontend calls POST /api/invoke/sbom_*.
         // AI webhook hooks — external systems (monitoring, CI/CD) can trigger
         // the AI agent via these endpoints. Authenticated via Bearer token.
-        .route("/hooks/wake", post(handlers::hook_wake))
-        .route("/hooks/agent", post(handlers::hook_agent))
-        .route("/hooks/event", post(handlers::hook_event))
+        .route("/hooks/wake", post(hook_handlers::hook_wake))
+        .route("/hooks/agent", post(hook_handlers::hook_agent))
+        .route("/hooks/event", post(hook_handlers::hook_event))
         // AI assistant endpoints.
         .route(
             "/api/invoke/ai_get_config",
-            post(handlers::ai_get_config_handler),
+            post(ai_handlers::ai_get_config_handler),
         )
         .route(
             "/api/invoke/ai_get_context",
-            post(handlers::ai_get_context_handler),
+            post(ai_handlers::ai_get_context_handler),
         )
         .route(
             "/api/invoke/ai_save_config",
-            post(handlers::ai_save_config_handler),
+            post(ai_handlers::ai_save_config_handler),
         )
-        .route("/api/invoke/ai_chat", post(handlers::ai_chat_handler))
-        .route("/api/invoke/ai_cancel", post(handlers::ai_cancel_handler))
+        .route("/api/invoke/ai_chat", post(ai_handlers::ai_chat_handler))
+        .route("/api/invoke/ai_cancel", post(ai_handlers::ai_cancel_handler))
         .route(
             "/api/invoke/ai_poll_events",
-            post(handlers::ai_poll_events_handler),
+            post(ai_handlers::ai_poll_events_handler),
         )
         .route(
             "/api/invoke/ai_approve_tool_call",
-            post(handlers::ai_approve_tool_call_handler),
+            post(ai_handlers::ai_approve_tool_call_handler),
         )
         .route(
             "/api/invoke/ai_test_connection",
-            post(handlers::ai_test_connection_handler),
+            post(ai_handlers::ai_test_connection_handler),
         )
         .route(
             "/api/invoke/ai_save_api_key",
-            post(handlers::ai_save_api_key_handler),
+            post(ai_handlers::ai_save_api_key_handler),
         )
         .route(
             "/api/invoke/ai_list_skills",
-            post(handlers::ai_list_skills_handler),
+            post(ai_handlers::ai_list_skills_handler),
         )
         .route(
             "/api/invoke/ai_memory_list",
-            post(handlers::ai_memory_list_handler),
+            post(ai_handlers::ai_memory_list_handler),
         )
         .route(
             "/api/invoke/ai_memory_search",
-            post(handlers::ai_memory_search_handler),
+            post(ai_handlers::ai_memory_search_handler),
         )
         .route(
             "/api/invoke/ai_memory_add",
-            post(handlers::ai_memory_add_handler),
+            post(ai_handlers::ai_memory_add_handler),
         )
         .route(
             "/api/invoke/ai_cron_list",
-            post(handlers::ai_cron_list_handler),
+            post(ai_handlers::ai_cron_list_handler),
         )
         .route(
             "/api/invoke/ai_cron_presets",
-            post(handlers::ai_cron_presets_handler),
+            post(ai_handlers::ai_cron_presets_handler),
         )
         .route(
             "/api/invoke/ai_evolution_strategies",
-            post(handlers::ai_evolution_strategies_handler),
+            post(ai_handlers::ai_evolution_strategies_handler),
         )
         .route(
             "/api/invoke/ai_memory_preferences",
-            post(handlers::ai_memory_preferences_handler),
+            post(ai_handlers::ai_memory_preferences_handler),
         )
         .route(
             "/api/invoke/ai_memory_delete",
-            post(handlers::ai_memory_delete_handler),
+            post(ai_handlers::ai_memory_delete_handler),
         )
         .route(
             "/api/invoke/ai_memory_clear",
-            post(handlers::ai_memory_clear_handler),
+            post(ai_handlers::ai_memory_clear_handler),
         )
         .route(
             "/api/invoke/ai_memory_search_vault",
-            post(handlers::ai_memory_search_vault_handler),
+            post(ai_handlers::ai_memory_search_vault_handler),
         )
         .route(
             "/api/invoke/ai_cron_add",
-            post(handlers::ai_cron_add_handler),
+            post(ai_handlers::ai_cron_add_handler),
         )
         .route(
             "/api/invoke/ai_cron_toggle",
-            post(handlers::ai_cron_toggle_handler),
+            post(ai_handlers::ai_cron_toggle_handler),
         )
         .route(
             "/api/invoke/ai_cron_delete",
-            post(handlers::ai_cron_delete_handler),
+            post(ai_handlers::ai_cron_delete_handler),
         )
         // Stubs for everything else.
         .route("/api/invoke/{cmd}", post(handlers::invoke_registry))

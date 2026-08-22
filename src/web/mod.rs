@@ -15,11 +15,15 @@
 //! `src/providers/transport.ts` for the seam.
 
 #[cfg(feature = "web")]
+pub mod ai_handlers;
+#[cfg(feature = "web")]
 pub mod auth;
 #[cfg(feature = "web")]
 pub mod auth_password;
 #[cfg(feature = "web")]
 pub mod handlers;
+#[cfg(feature = "web")]
+pub mod hook_handlers;
 #[cfg(feature = "web")]
 pub mod resource_handlers;
 #[cfg(feature = "web")]
