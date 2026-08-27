@@ -61,6 +61,8 @@ tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
 
 [profile.release]
+# For standalone (out-of-workspace) release builds; inside the monorepo
+# workspace the root Cargo.toml's profiles take precedence — tune there.
 codegen-units = 1
 lto = true
 opt-level = "s"

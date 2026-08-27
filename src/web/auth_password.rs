@@ -220,7 +220,8 @@ pub async fn auth_setup(
 /// gate). After 5 failures within 60s further attempts get 429 without
 /// touching the verifier, so an online password-guessing loop can't run at
 /// full speed. A successful login clears the window.
-static LOGIN_FAILURES: std::sync::Mutex<Vec<std::time::Instant>> = std::sync::Mutex::new(Vec::new());
+static LOGIN_FAILURES: std::sync::Mutex<Vec<std::time::Instant>> =
+    std::sync::Mutex::new(Vec::new());
 const MAX_FAILURES: usize = 5;
 const FAILURE_WINDOW: std::time::Duration = std::time::Duration::from_secs(60);
 
