@@ -57,7 +57,14 @@ async fn main() -> std::io::Result<()> {
     // Determine whether to use embedded assets.
     let use_embedded = args.static_dir.is_none();
 
-    let state = WebState::new(data_dir, addr);
+    let state = WebState::new(data_dir.clone(), addr);
+
+    // Process-wide audit log target — before any command can fire.
+    k7s_core::core::audit::set_dir(data_dir.clone());
+    // Scheduled AI tasks (ai_cron_*). Headless: web-mode ReadOnly + approvals
+    // auto-denied, so unattended runs can never mutate the cluster.
+    k7s_core::ai::cron::spawn_configured_runner(data_dir.clone(), state.core.manager.clone(), true)
+        .await;
 
     // ── Startup banner ──────────────────────────────────────────────
     let version = env!("CARGO_PKG_VERSION");
