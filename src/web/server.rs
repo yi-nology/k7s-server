@@ -116,11 +116,17 @@ pub fn api_router(state: WebState) -> Router {
                 // — port-forwards and shells started by one Streamable
                 // HTTP client are visible only to that client.
                 //
-                // The data dir is a per-session scratch; nothing writes to
-                // it today (the MCP server has no prefs UI), but a future
-                // per-session cache would land here.
-                let data_dir =
-                    std::env::temp_dir().join(format!("k7s-mcp-session-{}", std::process::id()));
+                // The data dir is a per-session scratch keyed by a fresh
+                // uuid — the factory runs once per Streamable HTTP session
+                // (stateful mode below), and this path used to be keyed by
+                // pid, which made every session in the process silently
+                // share one directory. Nothing writes to it today (the MCP
+                // server has no prefs UI), but a future per-session cache
+                // would land here and must not collide across sessions.
+                let data_dir = std::env::temp_dir().join(format!(
+                    "k7s-mcp-session-{}",
+                    k7s_deps::uuid::Uuid::new_v4()
+                ));
                 Ok(K7sMcpServer::new(data_dir))
             },
             Arc::new(LocalSessionManager::default()),
@@ -313,8 +319,9 @@ pub fn router(
     static_dir: Option<PathBuf>,
     use_embedded: bool,
     addr: SocketAddr,
+    https: bool,
 ) -> Router {
-    let cors = cors_layer(addr);
+    let cors = cors_layer(addr, https);
 
     let api = api_router(state);
     let mut app = api.layer(TraceLayer::new_for_http()).layer(cors);
@@ -336,7 +343,6 @@ pub fn router(
     app
 }
 
-/// Bind to `addr` and serve until the process is asked to stop. The
 /// Build the CORS layer. Although `/api/invoke/*` now requires a bearer
 /// token, an open `allow_origin(Any)` still lets any web page attempt
 /// cluster-control requests against a victim's k7s-web (and a leaked/token-
@@ -347,13 +353,17 @@ pub fn router(
 ///
 /// Methods/headers are narrowed to what the API actually uses. If you need a
 /// browser client on another origin, set `K7S_ALLOWED_ORIGINS=https://app.example.com`.
-fn cors_layer(addr: SocketAddr) -> CorsLayer {
+///
+/// `https` picks the scheme of the same-origin entry so it matches what the
+/// browser actually sees when `--tls-cert/--tls-key` terminate TLS here.
+fn cors_layer(addr: SocketAddr, https: bool) -> CorsLayer {
     use k7s_deps::http::{HeaderName, HeaderValue, Method};
     use tower_http::cors::AllowOrigin;
 
+    let scheme = if https { "https" } else { "http" };
     let mut origins: Vec<HeaderValue> = vec![
         // Same-origin prod (the SPA is served from this same addr).
-        HeaderValue::from_str(&format!("http://{addr}")).expect("valid origin"),
+        HeaderValue::from_str(&format!("{scheme}://{addr}")).expect("valid origin"),
         // Vite dev server (proxies /api/* here).
         HeaderValue::from_static("http://localhost:1420"),
     ];
@@ -384,14 +394,100 @@ fn cors_layer(addr: SocketAddr) -> CorsLayer {
         ])
 }
 
-/// `axum::serve` future resolves only on graceful shutdown; for now we let
-/// it run until SIGINT.
+/// Build a TLS acceptor from a PEM certificate chain + private key, for
+/// first-party HTTPS (`k7s-web --tls-cert/--tls-key`).
+///
+/// Parse failures come back as `io::Error` of kind `InvalidData` so the
+/// binary can fail fast with the offending path in the message.
+pub fn tls_acceptor(
+    cert_path: &std::path::Path,
+    key_path: &std::path::Path,
+) -> std::io::Result<k7s_deps::tokio_rustls::TlsAcceptor> {
+    use k7s_deps::rustls::pki_types::{CertificateDer, PrivateKeyDer};
+    use std::io::{BufReader, ErrorKind};
+
+    fn bad(ctx: String) -> std::io::Error {
+        std::io::Error::new(ErrorKind::InvalidData, ctx)
+    }
+
+    let certs: Vec<CertificateDer<'static>> =
+        k7s_deps::rustls_pemfile::certs(&mut BufReader::new(std::fs::File::open(cert_path)?))
+            .collect::<Result<_, _>>()
+            .map_err(|e| bad(format!("{}: {e}", cert_path.display())))?;
+    if certs.is_empty() {
+        return Err(bad(format!(
+            "{}: no PEM certificates found",
+            cert_path.display()
+        )));
+    }
+    let key: PrivateKeyDer<'static> =
+        k7s_deps::rustls_pemfile::private_key(&mut BufReader::new(std::fs::File::open(key_path)?))
+            .map_err(|e| bad(format!("{}: {e}", key_path.display())))?
+            .ok_or_else(|| bad(format!("{}: no private key found", key_path.display())))?;
+
+    // No client-cert auth (the bearer/password gates handle identity) and a
+    // single cert+key pair — the standard small-operator setup.
+    let config = k7s_deps::rustls::ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(certs, key)
+        .map_err(|e| bad(format!("cert/key unusable together: {e}")))?;
+    Ok(k7s_deps::tokio_rustls::TlsAcceptor::from(Arc::new(config)))
+}
+
+/// A bound TCP listener that upgrades every accepted connection to TLS, so
+/// `axum::serve` can drive HTTPS over it. Implementing axum's `Listener`
+/// trait (rather than hand-rolling accept loops with hyper) keeps graceful
+/// shutdown, connection limits and error handling identical to the plain
+/// HTTP path.
+struct TlsListener {
+    tcp: k7s_deps::tokio::net::TcpListener,
+    acceptor: k7s_deps::tokio_rustls::TlsAcceptor,
+}
+
+impl axum::serve::Listener for TlsListener {
+    type Io = k7s_deps::tokio_rustls::server::TlsStream<k7s_deps::tokio::net::TcpStream>;
+    type Addr = std::net::SocketAddr;
+
+    async fn accept(&mut self) -> (Self::Io, Self::Addr) {
+        // Mirror axum's TcpListener impl: transient errors are logged and
+        // retried instead of killing the server — one client speaking
+        // garbage (or a port scanner) must not take the listener down.
+        loop {
+            match self.tcp.accept().await {
+                Ok((stream, addr)) => match self.acceptor.accept(stream).await {
+                    Ok(tls) => return (tls, addr),
+                    Err(e) => {
+                        k7s_deps::tracing::warn!("TLS handshake with {addr} failed: {e}");
+                    }
+                },
+                Err(e) => {
+                    k7s_deps::tracing::error!("accept failed: {e}");
+                    k7s_deps::tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                }
+            }
+        }
+    }
+
+    fn local_addr(&self) -> std::io::Result<Self::Addr> {
+        self.tcp.local_addr()
+    }
+}
+
+/// Serve on an already-bound listener until the process is asked to stop.
+///
+/// The listener is handed in (not bound here) so the binary's port-picking
+/// can probe with `std::net::TcpListener` and then hand the *live* socket
+/// over — binding twice would re-open the race where another process grabs
+/// the port between probe and serve. `tls` wraps the listener in a
+/// `TlsAcceptor` for HTTPS; `None` serves plain HTTP.
 pub async fn serve(
-    addr: SocketAddr,
+    listener: k7s_deps::tokio::net::TcpListener,
     state: WebState,
     static_dir: Option<PathBuf>,
     use_embedded: bool,
+    tls: Option<k7s_deps::tokio_rustls::TlsAcceptor>,
 ) -> std::io::Result<()> {
+    let addr = listener.local_addr()?;
     let mode = if static_dir.is_some() {
         "server"
     } else if use_embedded {
@@ -399,7 +495,8 @@ pub async fn serve(
     } else {
         "dev-api"
     };
-    k7s_deps::tracing::info!("k7s-web ({mode}) listening on http://{addr} (MCP: /mcp)");
+    let scheme = if tls.is_some() { "https" } else { "http" };
+    k7s_deps::tracing::info!("k7s-web ({mode}) listening on {scheme}://{addr} (MCP: /mcp)");
 
     // k7s-web exposes the full Kubernetes control surface (apply/delete/drain/
     // exec, plaintext Secret reads). Every `/api/invoke/*` and `/hooks/*`
@@ -419,14 +516,33 @@ pub async fn serve(
                  loopback-only). Set K7S_WEB_TOKEN explicitly so your clients know it."
             );
         }
-        k7s_deps::tracing::warn!(
-            "⚠️  k7s-web on {addr} is network-reachable. Any client that can reach this \
-             port AND has the token has full cluster control. Prefer binding to 127.0.0.1 \
-             or sitting behind an authenticating reverse proxy."
-        );
+        if tls.is_none() {
+            k7s_deps::tracing::warn!(
+                "⚠️  k7s-web on {addr} is network-reachable over plain HTTP. Password \
+                 logins will travel in the clear — pass --tls-cert/--tls-key or put the \
+                 server behind a TLS-terminating reverse proxy."
+            );
+        } else {
+            k7s_deps::tracing::warn!(
+                "⚠️  k7s-web on {addr} is network-reachable. Any client that can reach this \
+                 port AND has the token has full cluster control. Prefer binding to 127.0.0.1 \
+                 or sitting behind an authenticating reverse proxy."
+            );
+        }
     }
 
-    let app = router(state, static_dir, use_embedded, addr);
-    let listener = k7s_deps::tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await
+    let app = router(state, static_dir, use_embedded, addr, tls.is_some());
+    match tls {
+        Some(acceptor) => {
+            axum::serve(
+                TlsListener {
+                    tcp: listener,
+                    acceptor,
+                },
+                app,
+            )
+            .await
+        }
+        None => axum::serve(listener, app).await,
+    }
 }

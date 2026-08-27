@@ -124,10 +124,29 @@ impl PasswordAuth {
         }
     }
 
-    pub fn cookie_of(token: &str) -> String {
+    /// Serialize the session cookie header value.
+    ///
+    /// `secure` (set for non-loopback binds) adds the `Secure` attribute so
+    /// the browser refuses to send the session cookie over plaintext HTTP —
+    /// without it a network attacker who can intercept the wire can replay
+    /// the cookie. Loopback keeps it off so plain-`http://127.0.0.1` dev
+    /// sessions still work.
+    pub fn cookie_of(token: &str, secure: bool) -> String {
         format!(
-            "{SESSION_COOKIE}={token}; Path=/; HttpOnly; SameSite=Strict; Max-Age={}",
-            SESSION_TTL.as_secs()
+            "{SESSION_COOKIE}={token}; Path=/; HttpOnly; SameSite=Strict; Max-Age={}{}",
+            SESSION_TTL.as_secs(),
+            if secure { "; Secure" } else { "" }
+        )
+    }
+
+    /// The clearing (logout) cookie must carry the same `Secure` attribute as
+    /// the cookie it replaces: browsers ignore a clearing Set-Cookie whose
+    /// attributes don't match the stored cookie's scope.
+    pub fn clear_cookie(secure: bool) -> String {
+        format!(
+            "{}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0{}",
+            SESSION_COOKIE,
+            if secure { "; Secure" } else { "" }
         )
     }
 
@@ -149,6 +168,61 @@ fn cookie_token(req: &axum::http::Request<axum::body::Body>) -> Option<String> {
 }
 
 // ---- handlers ----
+
+/// Header an unauthenticated first-run setup must present on non-loopback
+/// binds: `X-Setup-Token: <K7S_SETUP_TOKEN>`.
+///
+/// We picked a dedicated header (not the `Authorization: Bearer` slot) so the
+/// setup token can't be confused with the API bearer token — a client that
+/// already holds `K7S_WEB_TOKEN` must NOT be able to claim the password, and
+/// vice versa.
+const SETUP_TOKEN_HEADER: &str = "x-setup-token";
+
+/// First-to-claim gate for `/api/auth/setup` (see [`auth_setup`]). Returns
+/// `Ok(())` when this request may set the initial password.
+///
+/// Loopback binds stay open — the local-first-run UX (`k7s-web` on
+/// 127.0.0.1, no operator around) is unchanged. Non-loopback binds require
+/// the request to prove knowledge of `K7S_SETUP_TOKEN` via the
+/// [`SETUP_TOKEN_HEADER`] header: setup is a one-shot power move (it issues a
+/// valid session for the full cluster control surface), and without this
+/// gate any scanner on the network could race the real operator to it.
+fn check_setup_token(state: &WebState, headers: &axum::http::HeaderMap) -> Result<(), Response> {
+    if state.is_loopback {
+        return Ok(());
+    }
+    // Trim so a trailing newline in `K7S_SETUP_TOKEN=$(cat file)` doesn't
+    // lock everyone out.
+    let expected = std::env::var("K7S_SETUP_TOKEN")
+        .ok()
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty());
+    let Some(expected) = expected else {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(json!({
+                "ok": false,
+                "error": "remote setup disabled: set K7S_SETUP_TOKEN in k7s-web's environment \
+                          and send it as the X-Setup-Token header to claim the initial password"
+            })),
+        )
+            .into_response());
+    };
+    let provided = headers
+        .get(SETUP_TOKEN_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .unwrap_or("");
+    if super::auth::constant_time_eq(provided.as_bytes(), expected.as_bytes()) {
+        Ok(())
+    } else {
+        Err((
+            StatusCode::FORBIDDEN,
+            Json(json!({ "ok": false, "error": "invalid or missing X-Setup-Token" })),
+        )
+            .into_response())
+    }
+}
 
 /// Session-aware: `authRequired` is only true on non-loopback binds *without* a
 /// valid `k7s_session` cookie. The matrix: loopback → always false (the token
@@ -175,8 +249,12 @@ pub async fn auth_status(
     .into_response()
 }
 
+/// Set the initial password (first-to-claim). On non-loopback binds the
+/// request must carry `X-Setup-Token` matching `K7S_SETUP_TOKEN` — see
+/// [`check_setup_token`]; loopback keeps the open local first-run flow.
 pub async fn auth_setup(
     State(state): State<WebState>,
+    headers: axum::http::HeaderMap,
     Json(body): Json<k7s_deps::serde_json::Value>,
 ) -> Response {
     let Some(pwd) = body["password"].as_str() else {
@@ -192,6 +270,9 @@ pub async fn auth_setup(
             Json(json!({"ok": false, "error": "password must be >= 8 chars"})),
         )
             .into_response();
+    }
+    if let Err(resp) = check_setup_token(&state, &headers) {
+        return resp;
     }
     let mut guard = state
         .password_auth
@@ -210,7 +291,10 @@ pub async fn auth_setup(
     let token = guard.issue_session();
     drop(guard);
     (
-        [(SET_COOKIE, PasswordAuth::cookie_of(&token))],
+        [(
+            SET_COOKIE,
+            PasswordAuth::cookie_of(&token, !state.is_loopback),
+        )],
         Json(json!({"ok": true})),
     )
         .into_response()
@@ -282,7 +366,10 @@ pub async fn auth_login(
     drop(guard);
     clear_login_failures();
     (
-        [(SET_COOKIE, PasswordAuth::cookie_of(&token))],
+        [(
+            SET_COOKIE,
+            PasswordAuth::cookie_of(&token, !state.is_loopback),
+        )],
         Json(json!({"ok": true})),
     )
         .into_response()
@@ -300,13 +387,7 @@ pub async fn auth_logout(
             .drop_session(&t);
     }
     (
-        [(
-            SET_COOKIE,
-            format!(
-                "{}=; Path=/; HttpOnly; Max-Age=0",
-                PasswordAuth::cookie_name()
-            ),
-        )],
+        [(SET_COOKIE, PasswordAuth::clear_cookie(!state.is_loopback))],
         Json(json!({"ok": true})),
     )
         .into_response()
@@ -360,6 +441,25 @@ mod tests {
         assert!(!pa.check_session(&t));
     }
 
+    /// `Secure` rides along only when the caller asks (non-loopback binds);
+    /// the clearing cookie mirrors the issued cookie's flags.
+    #[test]
+    fn cookie_flags_follow_secure() {
+        let plain = PasswordAuth::cookie_of("tok", false);
+        assert!(plain.contains("HttpOnly"));
+        assert!(
+            !plain.contains("Secure"),
+            "loopback: no Secure, got: {plain}"
+        );
+        let secure = PasswordAuth::cookie_of("tok", true);
+        assert!(secure.contains("HttpOnly"));
+        assert!(secure.contains("Secure"), "got: {secure}");
+        let clear = PasswordAuth::clear_cookie(true);
+        assert!(clear.starts_with("k7s_session=;"));
+        assert!(clear.contains("Secure"), "got: {clear}");
+        assert!(!PasswordAuth::clear_cookie(false).contains("Secure"));
+    }
+
     /// Drive the assembled router: `/api/auth/*` must be reachable without a
     /// bearer token, static files must load pre-login (the login page needs
     /// them), and a session cookie must unlock otherwise-protected routes.
@@ -404,6 +504,19 @@ mod tests {
             b.body(Body::from(body)).unwrap()
         }
 
+        /// Like [`post_json`] but also carries the `X-Setup-Token` header the
+        /// non-loopback `/api/auth/setup` gate checks.
+        fn post_setup(uri: &str, setup_token: Option<&str>, body: String) -> Request<Body> {
+            let mut b = Request::builder()
+                .method("POST")
+                .uri(uri)
+                .header(header::CONTENT_TYPE, "application/json");
+            if let Some(t) = setup_token {
+                b = b.header("x-setup-token", t);
+            }
+            b.body(Body::from(body)).unwrap()
+        }
+
         fn set_cookie(resp: &axum::response::Response) -> String {
             resp.headers()
                 .get(header::SET_COOKIE)
@@ -438,6 +551,7 @@ mod tests {
                 Some(static_dir("flow")),
                 false,
                 "127.0.0.1:7180".parse().unwrap(),
+                false,
             );
 
             // Pre-login: status + static assets are public (login page loads).
@@ -595,6 +709,7 @@ mod tests {
                 Some(static_dir("forged")),
                 false,
                 "127.0.0.1:7180".parse().unwrap(),
+                false,
             );
             let resp = app
                 .oneshot(post_json(
@@ -616,7 +731,7 @@ mod tests {
             let addr: std::net::SocketAddr = "10.10.0.1:7180".parse().unwrap();
             let state = test_state_at("status-nl", "10.10.0.1:7180");
             assert!(!state.is_loopback, "test premise: non-loopback bind");
-            let app = server::router(state, Some(static_dir("status-nl")), false, addr);
+            let app = server::router(state, Some(static_dir("status-nl")), false, addr, false);
 
             // (a) Fresh install, no cookie: gated, and `configured: false` so
             // the SPA shows the *setup* form (not login).
@@ -625,18 +740,28 @@ mod tests {
             assert_eq!(st["configured"], json!(false));
 
             // (b) Setup issues a session; carrying the Set-Cookie pair clears
-            // the gate while `configured` flips to true.
+            // the gate while `configured` flips to true. Non-loopback setup is
+            // first-to-claim: it must present K7S_SETUP_TOKEN (set around this
+            // one test — no other test in this binary reads the var, so the
+            // env dance can't race).
+            std::env::set_var("K7S_SETUP_TOKEN", "nl-setup-secret");
             let resp = app
                 .clone()
-                .oneshot(post_json(
+                .oneshot(post_setup(
                     "/api/auth/setup",
-                    None,
+                    Some("nl-setup-secret"),
                     json!({"password": "correct-horse-battery"}).to_string(),
                 ))
                 .await
                 .unwrap();
+            std::env::remove_var("K7S_SETUP_TOKEN");
             assert_eq!(resp.status(), StatusCode::OK);
-            let pair = set_cookie(&resp).split(';').next().unwrap().to_string();
+            let cookie = set_cookie(&resp);
+            assert!(
+                cookie.contains("Secure"),
+                "non-loopback session cookie must be Secure, got: {cookie}"
+            );
+            let pair = cookie.split(';').next().unwrap().to_string();
             let st = status(&app, Some(&pair)).await;
             assert_eq!(
                 st["authRequired"],
@@ -676,6 +801,7 @@ mod tests {
                 Some(static_dir("apply-bundle")),
                 false,
                 "127.0.0.1:7180".parse().unwrap(),
+                false,
             );
             // Authenticate so require_token lets the invoke through.
             let resp = app

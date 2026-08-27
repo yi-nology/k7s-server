@@ -153,6 +153,110 @@ async fn protected_endpoint_with_valid_token_returns_ok() {
 }
 
 // ---------------------------------------------------------------------------
+// /api/auth/setup first-to-claim (K7S_SETUP_TOKEN on non-loopback binds)
+// ---------------------------------------------------------------------------
+
+/// Like [`make_state`] but with an arbitrary bind address — the setup gate
+/// branches on `is_loopback`, so the non-loopback tests need a state built
+/// from a non-loopback addr. Fresh temp dir per tag so the persisted
+/// `web-password` can't leak between tests.
+fn make_state_at(tag: &str, addr: &str) -> k7s_server::web::state::WebState {
+    let dir = std::env::temp_dir().join(format!("k7s-test-{tag}-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&dir);
+    k7s_server::web::state::WebState::new(dir, addr.parse().unwrap())
+}
+
+/// POST /api/auth/setup body, optionally with the `X-Setup-Token` header.
+fn setup_request(setup_token: Option<&str>) -> Request<Body> {
+    let mut b = Request::builder()
+        .method("POST")
+        .uri("/api/auth/setup")
+        .header(header::CONTENT_TYPE, "application/json");
+    if let Some(t) = setup_token {
+        b = b.header("x-setup-token", t);
+    }
+    b.body(Body::from(r#"{"password":"correct-horse-battery"}"#))
+        .unwrap()
+}
+
+/// Loopback keeps the open local first-run flow: setup succeeds with no
+/// `X-Setup-Token` at all (the loopback branch never consults the env var,
+/// so a parallel test toggling it can't break this).
+#[tokio::test]
+async fn setup_on_loopback_needs_no_setup_token() {
+    let state = make_state_at("setup-lo", "127.0.0.1:0");
+    assert!(state.is_loopback, "test premise: loopback bind");
+    let app = k7s_server::web::server::api_router(state);
+
+    let response = app.oneshot(setup_request(None)).await.unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+/// Non-loopback setup is first-to-claim: with `K7S_SETUP_TOKEN` unset it's
+/// 403 regardless of headers; with it set, only a matching `X-Setup-Token`
+/// gets through — and only once (second claim → 409). All env manipulation
+/// lives inside this single test so parallel tests can't observe a
+/// half-toggled var.
+#[tokio::test]
+async fn setup_on_non_loopback_requires_setup_token() {
+    let state = make_state_at("setup-nl", "10.10.0.1:0");
+    assert!(!state.is_loopback, "test premise: non-loopback bind");
+    let app = k7s_server::web::server::api_router(state);
+
+    // (a) Operator never set K7S_SETUP_TOKEN → refuse with guidance.
+    std::env::remove_var("K7S_SETUP_TOKEN");
+    let response = app.clone().oneshot(setup_request(None)).await.unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let json = body_json(response).await;
+    assert!(
+        json.get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .contains("K7S_SETUP_TOKEN"),
+        "unset-env error must point at K7S_SETUP_TOKEN, got: {json}"
+    );
+
+    std::env::set_var("K7S_SETUP_TOKEN", "claim-secret");
+
+    // (b) Env set but header missing / wrong → still 403.
+    let response = app.clone().oneshot(setup_request(None)).await.unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let response = app
+        .clone()
+        .oneshot(setup_request(Some("wrong-secret")))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+    // (c) Matching header claims the password: 200 + Secure session cookie.
+    let response = app
+        .clone()
+        .oneshot(setup_request(Some("claim-secret")))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let cookie = response
+        .headers()
+        .get(header::SET_COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
+    assert!(cookie.contains("Secure"), "got: {cookie}");
+
+    // (d) The claim is one-shot: a second (still correctly signed) setup
+    // hits the already-configured conflict.
+    let response = app
+        .clone()
+        .oneshot(setup_request(Some("claim-secret")))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+
+    std::env::remove_var("K7S_SETUP_TOKEN");
+}
+
+// ---------------------------------------------------------------------------
 // Status endpoint
 // ---------------------------------------------------------------------------
 

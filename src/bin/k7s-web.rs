@@ -10,9 +10,13 @@
 //! - **Auto browser open**: opens the default browser to the serving URL.
 //! - **Embedded assets**: serves the built React app from compile-time
 //!   embedded files when no `--static` dir is given.
+//! - **Optional first-party TLS**: `--tls-cert/--tls-key` serve HTTPS
+//!   directly; without them (the default) the server speaks plain HTTP and
+//!   TLS is expected to terminate at a reverse proxy if needed.
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener as StdTcpListener};
 
+use k7s_server::web::server::tls_acceptor;
 use k7s_server::web::{serve, WebState};
 
 #[k7s_deps::tokio::main]
@@ -31,11 +35,44 @@ async fn main() -> std::io::Result<()> {
     let args = parse_args();
 
     // ── Address selection ─────────────────────────────────────────────
-    let addr = if let Some(a) = args.addr {
-        a
+    // Bind once and keep the live listener: `pick_port` used to probe with
+    // a std listener, drop it, and let `serve` re-bind — a window where
+    // another process could steal the port. Now the same socket is handed
+    // all the way through to `axum::serve`.
+    let bind: std::io::Result<(StdTcpListener, SocketAddr)> = if let Some(a) = args.addr {
+        StdTcpListener::bind(a).map(|l| (l, a))
     } else {
-        pick_port(args.bind, args.preferred_port).await
+        pick_port(args.bind, args.preferred_port)
     };
+    let (std_listener, addr) = match bind {
+        Ok(v) => v,
+        Err(e) => {
+            k7s_deps::tracing::error!("could not bind: {e}");
+            std::process::exit(1);
+        }
+    };
+    // A socket must be non-blocking before it can live on the tokio runtime.
+    std_listener.set_nonblocking(true)?;
+    let listener = k7s_deps::tokio::net::TcpListener::from_std(std_listener)?;
+
+    // ── TLS ───────────────────────────────────────────────────────────
+    // Half-specified TLS flags are a config mistake — fail fast instead of
+    // silently serving HTTP.
+    let tls = match (&args.tls_cert, &args.tls_key) {
+        (Some(cert), Some(key)) => match tls_acceptor(cert, key) {
+            Ok(acceptor) => Some(acceptor),
+            Err(e) => {
+                eprintln!("k7s-web: TLS setup failed: {e}");
+                std::process::exit(1);
+            }
+        },
+        (None, None) => None,
+        _ => {
+            eprintln!("k7s-web: --tls-cert and --tls-key must be given together");
+            std::process::exit(1);
+        }
+    };
+    let scheme = if tls.is_some() { "https" } else { "http" };
 
     // Where prefs and any future state lives.
     let data_dir = k7s_server::default_data_dir();
@@ -68,7 +105,7 @@ async fn main() -> std::io::Result<()> {
 
     // ── Startup banner ──────────────────────────────────────────────
     let version = env!("CARGO_PKG_VERSION");
-    let url = format!("http://{addr}");
+    let url = format!("{scheme}://{addr}");
 
     // Collect non-loopback IPv4 addresses for LAN access hints.
     let lan_ips: Vec<String> = local_ip_address::list_afinet_netifas()
@@ -102,7 +139,7 @@ async fn main() -> std::io::Result<()> {
     let mut lan_lines: Vec<String> = Vec::new();
     if addr.ip().is_unspecified() {
         for ip in &lan_ips {
-            lan_lines.push(format!("http://{}:{}", ip, addr.port()));
+            lan_lines.push(format!("{scheme}://{}:{}", ip, addr.port()));
         }
     }
     // Box width: enough for the longest content line, minimum 48.
@@ -164,7 +201,7 @@ async fn main() -> std::io::Result<()> {
 
     // ── Start server ─────────────────────────────────────────────────
     k7s_deps::tokio::select! {
-        result = serve(addr, state, args.static_dir, use_embedded) => {
+        result = serve(listener, state, args.static_dir, use_embedded, tls) => {
             result?;
         }
         _ = k7s_deps::tokio::signal::ctrl_c() => {
@@ -175,23 +212,28 @@ async fn main() -> std::io::Result<()> {
     Ok(())
 }
 
-/// Try to bind to `preferred` port on `bind_ip`; if busy, try the next 100 ports.
-async fn pick_port(bind_ip: IpAddr, preferred: u16) -> SocketAddr {
+/// Try to bind to `preferred` port on `bind_ip`; if busy, try the next 100
+/// ports, then let the OS assign one. Returns the *live* listener with its
+/// address — the caller converts it to a tokio listener and serves on that
+/// very socket, so the port stays reserved from probe to accept. (Dropping
+/// the probe listener and re-binding later would re-open the race window
+/// where another process grabs the port in between.)
+fn pick_port(bind_ip: IpAddr, preferred: u16) -> std::io::Result<(StdTcpListener, SocketAddr)> {
     let addr = SocketAddr::new(bind_ip, preferred);
-    if StdTcpListener::bind(addr).is_ok() {
-        return addr;
+    if let Ok(listener) = StdTcpListener::bind(addr) {
+        return Ok((listener, addr));
     }
     for port in (preferred + 1)..=(preferred + 100) {
         let addr = SocketAddr::new(bind_ip, port);
-        if StdTcpListener::bind(addr).is_ok() {
+        if let Ok(listener) = StdTcpListener::bind(addr) {
             k7s_deps::tracing::info!("port {preferred} busy, using {port}");
-            return addr;
+            return Ok((listener, addr));
         }
     }
-    let listener = StdTcpListener::bind(SocketAddr::new(bind_ip, 0)).expect("bind to port 0");
-    let addr = listener.local_addr().expect("get local addr");
+    let listener = StdTcpListener::bind(SocketAddr::new(bind_ip, 0))?;
+    let addr = listener.local_addr()?;
     k7s_deps::tracing::info!("port {preferred}+ busy, OS assigned {addr}");
-    addr
+    Ok((listener, addr))
 }
 
 // ── CLI argument parsing ─────────────────────────────────────────────
@@ -212,6 +254,8 @@ fn print_help() {
     eprintln!("    --port <PORT>         监听端口 (默认: 7180)");
     eprintln!("                          端口占用时自动递增尝试下一个");
     eprintln!("    --addr <IP:PORT>      完整监听地址 (覆盖 --bind 和 --port)");
+    eprintln!("    --tls-cert <FILE>     TLS 证书链 PEM 文件 (与 --tls-key 一起启用 HTTPS)");
+    eprintln!("    --tls-key <FILE>      TLS 私钥 PEM 文件 (必须与 --tls-cert 同时给出)");
     eprintln!();
     eprintln!("  资源选项:");
     eprintln!("    --static <DIR>        从指定目录加载前端资源");
@@ -224,6 +268,8 @@ fn print_help() {
     eprintln!();
     eprintln!("  环境变量:");
     eprintln!("    K7S_WEB_TOKEN         API 访问令牌 (loopback 自动生成，非 loopback 需设置)");
+    eprintln!("    K7S_SETUP_TOKEN       非 loopback 绑定时首次设置密码所需的令牌");
+    eprintln!("                          (设置密码请求须携带 X-Setup-Token 请求头,先到先得)");
     eprintln!("    K7S_HOOK_TOKEN        Webhook 访问令牌 (不设置则 webhook 禁用)");
     eprintln!("    K7S_ALLOWED_ORIGINS   允许的 CORS 源 (逗号分隔)");
     eprintln!("    RUST_LOG              日志级别 (默认: info，可选: debug, warn, error)");
@@ -260,6 +306,9 @@ fn print_help() {
     eprintln!("    # 带 webhook 令牌启动");
     eprintln!("    K7S_HOOK_TOKEN=my-secret k7s-web --bind 0.0.0.0");
     eprintln!();
+    eprintln!("    # 自带 TLS 证书直供 HTTPS (否则建议在反代终止 TLS)");
+    eprintln!("    k7s-web --bind 0.0.0.0 --tls-cert cert.pem --tls-key key.pem --no-open");
+    eprintln!();
     eprintln!("  Docker:");
     eprintln!("    docker run -p 7180:7180 k7s-web --bind 0.0.0.0 --no-open");
     eprintln!();
@@ -279,6 +328,11 @@ struct Args {
     preferred_port: u16,
     static_dir: Option<std::path::PathBuf>,
     no_open: bool,
+    /// PEM certificate chain for first-party HTTPS (`--tls-cert`).
+    tls_cert: Option<std::path::PathBuf>,
+    /// PEM private key matching `tls_cert` (`--tls-key`). Must be given
+    /// together with `--tls-cert`; one without the other exits at startup.
+    tls_key: Option<std::path::PathBuf>,
 }
 
 fn parse_args() -> Args {
@@ -288,6 +342,8 @@ fn parse_args() -> Args {
         preferred_port: 7180,
         static_dir: None,
         no_open: false,
+        tls_cert: None,
+        tls_key: None,
     };
     let mut iter = std::env::args().skip(1);
     while let Some(arg) = iter.next() {
@@ -314,6 +370,12 @@ fn parse_args() -> Args {
             }
             "--no-open" => {
                 args.no_open = true;
+            }
+            "--tls-cert" => {
+                args.tls_cert = iter.next().map(std::path::PathBuf::from);
+            }
+            "--tls-key" => {
+                args.tls_key = iter.next().map(std::path::PathBuf::from);
             }
             "-h" | "--help" => {
                 print_help();

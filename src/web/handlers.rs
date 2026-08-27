@@ -2,13 +2,11 @@
 //!
 //! Contains the cluster lifecycle commands (`list_contexts`, `connect`,
 //! `status`, `import_kubeconfig_content`), preference I/O, the SBOM REST
-//! endpoints, the loopback `web_token` publisher, the registry-backed
-//! `invoke_registry` catch-all, and the shared `core_client` helper that
-//! every handler module uses.
+//! endpoints, the loopback `web_token` publisher, and the registry-backed
+//! `invoke_registry` catch-all.
 //!
-//! Resource mutation and shell handlers live in their own modules
-//! (`resource_handlers`, `shell_handlers`); AI assistant handlers in
-//! `ai_handlers`; webhook hooks in `hook_handlers`.
+//! AI assistant handlers live in `ai_handlers`; webhook hooks in
+//! `hook_handlers`.
 
 use axum::{
     extract::{Path, State},
@@ -16,11 +14,9 @@ use axum::{
     Json,
 };
 use k7s_deps::kube::config::Kubeconfig;
-use std::sync::Arc;
 
 use k7s_core::core::prefs::{self, Prefs};
 use k7s_core::core::shell_common;
-use k7s_core::core::CoreState;
 use k7s_core::error::{AppError, AppResult};
 use k7s_core::kube::{
     client::{self, ContextInfo},
@@ -163,22 +159,6 @@ pub async fn import_kubeconfig_content(
 // ---------------------------------------------------------------------------
 // Catch-all stub for unimplemented commands.
 // ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Helpers (re-implementations of the small bits commands.rs's connect/get_yaml
-// need that aren't already in `k7s_deps::kube::`).
-// ---------------------------------------------------------------------------
-
-pub(super) async fn core_client(core: &Arc<CoreState>) -> AppResult<k7s_deps::kube::Client> {
-    // `Disconnected` (not `NotFound`) is intentional: the front-end wants to
-    // detect this case and route to a "pick a cluster" flow, not treat it as
-    // "the object you asked for doesn't exist". String-matching would be
-    // fragile; switching on the error variant in serde-deserialised output
-    // is harder, so the error message itself stays human-readable and the
-    // Tauri shell (which uses a different error path) keeps its own
-    // classification.
-    core.manager.client().await.ok_or(AppError::Disconnected)
-}
 
 // ---------------------------------------------------------------------------
 // SBOM handlers

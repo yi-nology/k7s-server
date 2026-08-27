@@ -25,11 +25,7 @@ pub mod handlers;
 #[cfg(feature = "web")]
 pub mod hook_handlers;
 #[cfg(feature = "web")]
-pub mod resource_handlers;
-#[cfg(feature = "web")]
 pub mod server;
-#[cfg(feature = "web")]
-pub mod shell_handlers;
 #[cfg(feature = "web")]
 pub mod sse;
 #[cfg(feature = "web")]

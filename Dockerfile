@@ -17,13 +17,18 @@
 # ─────────────────────────────────────────────────────────────────
 # Stage 1 — front-end (pre-built in CI or local build)
 # ─────────────────────────────────────────────────────────────────
-FROM alpine:3.21 AS frontend
+# Base images are pinned by digest (resolved from the floating tag via
+# `curl -s https://hub.docker.com/v2/repositories/library/<image>/tags/<tag>
+# | jq -r .digest`) for reproducible builds — refresh deliberately.
+#   alpine:3.21  @ 2026-04-17
+#   rust:1-bookworm @ 2026-08-25 (rust patch releases retag weekly)
+FROM alpine:3.21@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d AS frontend
 COPY dist /dist
 
 # ─────────────────────────────────────────────────────────────────
 # Stage 2 — Rust binary (musl static, multi-arch)
 # ─────────────────────────────────────────────────────────────────
-FROM rust:1-bookworm AS backend
+FROM rust:1-bookworm@sha256:82150a52ec202c1b14d7817e14516c392bb7f5cfebd88f1ed531cb37ebd39922 AS backend
 
 ARG TARGETARCH
 
@@ -77,7 +82,7 @@ RUN ARCH_TRIPLE=$(case "${TARGETARCH}" in \
 # ─────────────────────────────────────────────────────────────────
 # Stage 3 — runtime (minimal, no glibc)
 # ─────────────────────────────────────────────────────────────────
-FROM alpine:3.21 AS runtime
+FROM alpine:3.21@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d AS runtime
 
 RUN addgroup -S k7s && adduser -S -G k7s -h /home/k7s k7s \
  && mkdir -p /home/k7s /data && chown -R k7s:k7s /home/k7s /data

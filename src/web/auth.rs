@@ -79,7 +79,10 @@ pub fn resolve_token(data_dir: &Path) -> String {
 }
 
 /// Constant-time byte comparison. Returns `true` iff equal.
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+///
+/// Shared with `auth_password`'s setup-token check so both bearer-style
+/// comparisons get the same timing-leak protection.
+pub(super) fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         // Length itself leaks, but that's unavoidable for a bearer token
         // check and not sensitive (token length is fixed by the generator).
