@@ -153,30 +153,14 @@ async fn protected_endpoint_with_valid_token_returns_ok() {
 }
 
 // ---------------------------------------------------------------------------
-// Public endpoints bypass auth
+// Status endpoint
 // ---------------------------------------------------------------------------
 
+/// `/api/status` used to be public; it leaks the active context and API
+/// server address, so it now sits behind the token gate like everything
+/// else that isn't `/health`.
 #[tokio::test]
-async fn health_endpoint_bypasses_auth() {
-    let state = make_state();
-    let app = k7s_server::web::server::api_router(state);
-
-    // /health should work without any auth header
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/health")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(response.status(), StatusCode::OK);
-}
-
-#[tokio::test]
-async fn status_endpoint_bypasses_auth() {
+async fn status_endpoint_requires_auth() {
     let state = make_state();
     let app = k7s_server::web::server::api_router(state);
 
@@ -190,22 +174,20 @@ async fn status_endpoint_bypasses_auth() {
         .await
         .unwrap();
 
-    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
-
-// ---------------------------------------------------------------------------
-// Status endpoint
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn status_returns_disconnected_when_no_cluster() {
     let state = make_state();
+    let token = auth_token(&state).to_string();
     let app = k7s_server::web::server::api_router(state);
 
     let response = app
         .oneshot(
             Request::builder()
                 .uri("/api/status")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -225,6 +207,103 @@ async fn status_returns_disconnected_when_no_cluster() {
         data.get("connected").unwrap(),
         &k7s_deps::serde_json::Value::Bool(false)
     );
+}
+
+// ---------------------------------------------------------------------------
+// /mcp and /api/events auth regression
+// ---------------------------------------------------------------------------
+//
+// `/mcp` used to bypass `require_token` entirely: the router merged the MCP
+// service AFTER `.layer(require_token)`, and axum layers only cover routes
+// registered before the call. These tests pin the fix — an unauthenticated
+// client must never reach the MCP transport or the SSE event stream (which
+// fans out `shell-out:{id}` terminal output to every subscriber).
+
+#[tokio::test]
+async fn mcp_endpoint_without_token_returns_401() {
+    let state = make_state();
+    let app = k7s_server::web::server::api_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/mcp")
+                .method("POST")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn mcp_endpoint_with_valid_token_passes_auth() {
+    let state = make_state();
+    let token = auth_token(&state).to_string();
+    let app = k7s_server::web::server::api_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/mcp")
+                .method("POST")
+                .header("content-type", "application/json")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::from(
+                    r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // The request must clear the auth gate — whatever the MCP transport
+    // replies with (200/400 on a minimal initialize body), it must not be
+    // an auth rejection.
+    assert_ne!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn events_endpoint_without_token_returns_401() {
+    let state = make_state();
+    let app = k7s_server::web::server::api_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/events")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn events_endpoint_with_valid_token_returns_200() {
+    let state = make_state();
+    let token = auth_token(&state).to_string();
+    let app = k7s_server::web::server::api_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/events")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
 }
 
 // ---------------------------------------------------------------------------
@@ -646,12 +725,14 @@ async fn scale_resource_without_connection_returns_error() {
 #[tokio::test]
 async fn events_endpoint_returns_sse() {
     let state = make_state();
+    let token = auth_token(&state).to_string();
     let app = k7s_server::web::server::api_router(state);
 
     let response = app
         .oneshot(
             Request::builder()
                 .uri("/api/events")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
                 .body(Body::empty())
                 .unwrap(),
         )

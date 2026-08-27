@@ -23,6 +23,11 @@
 //! - `POST/GET/DELETE /mcp` for the Streamable HTTP MCP transport — the
 //!   same tools the stdio `k7s-mcp` binary exposes, but reachable by
 //!   network so AI clients on a different host can connect.
+//!
+//! Everything except `/health` and `/api/health` sits behind the
+//! `require_token` middleware (bearer token or password session cookie) —
+//! including `/mcp` and `/api/events`, both of which expose cluster data
+//! and shell I/O.
 
 use axum::{
     routing::{get, post},
@@ -148,17 +153,9 @@ pub fn api_router(state: WebState) -> Router {
             "/api/invoke/import_kubeconfig_content",
             post(handlers::import_kubeconfig_content),
         )
-        // Mutation commands — same business logic as the Tauri shell, just
-        // reachable over HTTP. Added in batches as the Tauri commands grew
-        // their own contracts; the catch-all below still 501s anything we
-        // haven't bridged.
-        // Log streaming — the headline feature the previous 501 broke. Lines
-        // flow through the same `EventSink` → SSE path the watchers use.
-        // Interactive shells — exec over SSE, input/resize/stop as POSTs.
-        // Same wire names as the Tauri commands so the front-end can swap
-        // providers unchanged. `shell-out:{id}` / `shell-closed:{id}` events
-        // come through the existing `/api/events` SSE stream.
-        // EndpointSlices — for the topology graph.
+        // Everything else (mutations, log streaming, interactive shells,
+        // EndpointSlices, …) goes through the registry catch-all below —
+        // same business logic as the Tauri shell, same wire names.
         // SBOM endpoints (REST-style).
         .route("/api/sbom/image", post(handlers::sbom_generate_image))
         .route("/api/sbom/history", get(handlers::sbom_list_history))
@@ -280,24 +277,31 @@ pub fn api_router(state: WebState) -> Router {
         .route("/api/auth/setup", post(auth_password::auth_setup))
         .route("/api/auth/login", post(auth_password::auth_login))
         .route("/api/auth/logout", post(auth_password::auth_logout))
+        // The Streamable HTTP MCP transport. Same tools the stdio
+        // `k7s-mcp` binary exposes, reachable by URL — point any modern
+        // MCP client at `http://<host>:<port>/mcp`. Mounted as a service
+        // (not a route) because the transport handles GET / POST / DELETE
+        // internally per the MCP Streamable HTTP spec.
+        //
+        // Merged BEFORE `.with_state`/`.layer` below on purpose: axum's
+        // `Router::layer` only covers routes registered before the call, so
+        // a post-layer merge would leave `/mcp` completely unauthenticated —
+        // and it exposes exec, node shells and full cluster write access.
+        // MCP clients must send `Authorization: Bearer <K7S_WEB_TOKEN>`
+        // (a live password session cookie also works).
+        // See `README.md` § "MCP server → Wire it into …" for client configs.
+        .merge(Router::new().nest_service("/mcp", mcp_service.clone()))
         .with_state(state.clone())
-        // Auth gate: every `/api/invoke/*` and `/hooks/*` request must carry
-        // `Authorization: Bearer <token>`. Public endpoints (health/status/
-        // events, and loopback `/api/web-token`) are exempted inside the
-        // middleware by path. Applied after routes are registered so it sees
-        // the resolved state.
+        // Auth gate: every `/api/invoke/*`, `/mcp`, `/api/status`,
+        // `/api/events` and `/hooks/*` request must carry
+        // `Authorization: Bearer <token>` (or a live session cookie). Public
+        // endpoints (health, and loopback `/api/web-token`) are exempted
+        // inside the middleware by path. Applied after routes are registered
+        // so it sees the resolved state.
         .layer(axum::middleware::from_fn_with_state(
             state,
             super::auth::require_token,
         ))
-        // The Streamable HTTP MCP transport. Same tools the stdio
-        // `k7s-mcp` binary exposes, reachable by URL — point any modern
-        // MCP client at `http://<host>:<port>/mcp` and you get the same
-        // 29 tools. See `README.md` § "MCP server → Wire it into …" for
-        // client configs. Mounted as a service (not a route) because the
-        // transport handles GET / POST / DELETE internally per the MCP
-        // Streamable HTTP spec.
-        .merge(Router::new().nest_service("/mcp", mcp_service.clone()))
 }
 
 /// Build the full router. In server mode, layer the static-file service on

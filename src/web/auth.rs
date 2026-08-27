@@ -105,10 +105,14 @@ pub async fn require_token(
     // are the password-gate endpoints themselves (status/setup/login/logout);
     // they can't require what they issue. Static assets bypass this layer
     // entirely (the `ServeDir`/embedded fallback is attached after it).
-    let is_public = matches!(
-        path,
-        "/api/health" | "/health" | "/api/status" | "/api/events"
-    ) || (state.is_loopback && path == "/api/web-token")
+    //
+    // `/api/events` and `/api/status` are deliberately NOT public: the SSE
+    // stream fans out every event — including `shell-out:{id}` terminal
+    // output — to whoever subscribes, and status leaks the active context
+    // and API server address. The SPA's fetch-based subscriber sends the
+    // bearer token, and cookie sessions cover EventSource clients.
+    let is_public = matches!(path, "/api/health" | "/health")
+        || (state.is_loopback && path == "/api/web-token")
         || path.starts_with("/api/auth/");
     if is_public {
         return next.run(req).await;
