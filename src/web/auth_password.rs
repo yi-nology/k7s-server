@@ -216,6 +216,33 @@ pub async fn auth_setup(
         .into_response()
 }
 
+/// Sliding-window throttle for failed logins (process-wide, single-user
+/// gate). After 5 failures within 60s further attempts get 429 without
+/// touching the verifier, so an online password-guessing loop can't run at
+/// full speed. A successful login clears the window.
+static LOGIN_FAILURES: std::sync::Mutex<Vec<std::time::Instant>> = std::sync::Mutex::new(Vec::new());
+const MAX_FAILURES: usize = 5;
+const FAILURE_WINDOW: std::time::Duration = std::time::Duration::from_secs(60);
+
+fn login_throttled() -> bool {
+    let mut fails = LOGIN_FAILURES.lock().unwrap_or_else(|e| e.into_inner());
+    let cutoff = std::time::Instant::now() - FAILURE_WINDOW;
+    fails.retain(|t| *t > cutoff);
+    fails.len() >= MAX_FAILURES
+}
+
+fn record_login_failure() {
+    let mut fails = LOGIN_FAILURES.lock().unwrap_or_else(|e| e.into_inner());
+    fails.push(std::time::Instant::now());
+}
+
+fn clear_login_failures() {
+    LOGIN_FAILURES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clear();
+}
+
 pub async fn auth_login(
     State(state): State<WebState>,
     Json(body): Json<k7s_deps::serde_json::Value>,
@@ -227,11 +254,23 @@ pub async fn auth_login(
         )
             .into_response();
     };
+    if login_throttled() {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(json!({
+                "ok": false,
+                "error": "too many failed login attempts — wait a minute and try again"
+            })),
+        )
+            .into_response();
+    }
     let guard = state
         .password_auth
         .lock()
         .unwrap_or_else(|e| e.into_inner());
     if !guard.verify(pwd) {
+        drop(guard);
+        record_login_failure();
         return (
             StatusCode::UNAUTHORIZED,
             Json(json!({"ok": false, "error": "wrong password"})),
@@ -240,6 +279,7 @@ pub async fn auth_login(
     }
     let token = guard.issue_session();
     drop(guard);
+    clear_login_failures();
     (
         [(SET_COOKIE, PasswordAuth::cookie_of(&token))],
         Json(json!({"ok": true})),
@@ -274,6 +314,18 @@ pub async fn auth_logout(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn login_throttle_engages_after_five_failures() {
+        clear_login_failures();
+        assert!(!login_throttled());
+        for _ in 0..MAX_FAILURES {
+            record_login_failure();
+        }
+        assert!(login_throttled(), "5 failures in the window must throttle");
+        clear_login_failures();
+        assert!(!login_throttled(), "success clears the window");
+    }
 
     #[test]
     fn setup_verify_roundtrip() {
