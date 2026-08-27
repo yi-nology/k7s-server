@@ -1,3 +1,5 @@
+#![cfg(feature = "web")]
+
 //! Web-surface reconciliation: every command the desktop can invoke must be
 //! reachable from the web shell too — either through the registry
 //! (`POST /api/invoke/{cmd}` catch-all) or through a dedicated route.
