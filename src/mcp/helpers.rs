@@ -23,7 +23,12 @@ use k7s_deps::kube::Client;
 /// marking these as "the tool ran" lets the model see the message rather
 /// than a protocol-level error code.
 pub fn tool_error(e: impl std::fmt::Display) -> McpError {
-    McpError::internal_error(e.to_string(), None)
+    let payload = k7s_core::ai::tools::error_shape::tool_error_payload(&e.to_string());
+    // The message is the structured JSON ({error, hint, retryable}) so MCP
+    // clients — human or model — get the same self-correction guidance the
+    // agent loop's tool results carry, not a bare string to blind-retry.
+    let text = payload.to_string();
+    McpError::internal_error(text, None)
 }
 
 /// Helper: serialise `value` to pretty JSON and wrap it as a single
