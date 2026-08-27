@@ -1,6 +1,6 @@
 [package]
 name = "k7s-server"
-version = "0.5.2"
+version = "0.6.0"
 description = "k7s server — axum HTTP + MCP server for k7s"
 authors = ["k7s"]
 edition = "2021"

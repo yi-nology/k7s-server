@@ -268,6 +268,9 @@ fn print_help() {
     eprintln!();
     eprintln!("  环境变量:");
     eprintln!("    K7S_WEB_TOKEN         API 访问令牌 (loopback 自动生成，非 loopback 需设置)");
+    eprintln!(
+        "    K7S_TLS_CERT/_KEY     TLS 证书/私钥路径 (与 --tls-cert/--tls-key 等价的容器部署方式)"
+    );
     eprintln!("    K7S_SETUP_TOKEN       非 loopback 绑定时首次设置密码所需的令牌");
     eprintln!("                          (设置密码请求须携带 X-Setup-Token 请求头,先到先得)");
     eprintln!("    K7S_HOOK_TOKEN        Webhook 访问令牌 (不设置则 webhook 禁用)");
@@ -345,6 +348,14 @@ fn parse_args() -> Args {
         tls_cert: None,
         tls_key: None,
     };
+    // Env fallback so container deployments (compose) can enable TLS without
+    // touching the entrypoint's CLI; explicit flags win when given.
+    if args.tls_cert.is_none() {
+        args.tls_cert = std::env::var_os("K7S_TLS_CERT").map(std::path::PathBuf::from);
+    }
+    if args.tls_key.is_none() {
+        args.tls_key = std::env::var_os("K7S_TLS_KEY").map(std::path::PathBuf::from);
+    }
     let mut iter = std::env::args().skip(1);
     while let Some(arg) = iter.next() {
         match arg.as_str() {
