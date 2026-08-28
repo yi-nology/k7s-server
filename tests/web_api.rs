@@ -1063,3 +1063,194 @@ async fn version_endpoint_requires_token() {
 
     assert_eq!(response.status(), axum::http::StatusCode::UNAUTHORIZED);
 }
+
+// ---------------------------------------------------------------------------
+// Local chart upload — POST /api/charts/upload
+// ---------------------------------------------------------------------------
+
+/// Build a minimal valid chart `.tgz` in-test (the k7s-core `tgz_bytes`
+/// helper is private to that crate's test module, so this is a local
+/// equivalent over the same k7s_deps tar/flate2 crates).
+fn chart_tgz_bytes(name: &str, version: &str) -> Vec<u8> {
+    use k7s_deps::flate2::write::GzEncoder;
+    use k7s_deps::flate2::Compression;
+    use std::io::Write;
+
+    let chart_yaml = format!("apiVersion: v2\nname: {name}\nversion: {version}\n");
+    let mut builder = k7s_deps::tar::Builder::new(Vec::new());
+    let mut header = k7s_deps::tar::Header::new_gnu();
+    header.set_size(chart_yaml.len() as u64);
+    header.set_mode(0o644);
+    header.set_cksum();
+    builder
+        .append_data(
+            &mut header,
+            format!("{name}/Chart.yaml"),
+            chart_yaml.as_bytes(),
+        )
+        .unwrap();
+    let tarball = builder.into_inner().unwrap();
+    let mut gz = GzEncoder::new(Vec::new(), Compression::default());
+    gz.write_all(&tarball).unwrap();
+    gz.finish().unwrap()
+}
+
+/// base64 of raw bytes — the wire encoding the front-end sends.
+fn chart_b64(bytes: &[u8]) -> String {
+    use k7s_deps::base64::Engine;
+    k7s_deps::base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+/// Authenticated upload request carrying a JSON body verbatim.
+fn chart_upload_request(token: &str, body: String) -> Request<Body> {
+    Request::builder()
+        .method("POST")
+        .uri("/api/charts/upload")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .body(Body::from(body))
+        .unwrap()
+}
+
+/// The upload route sits behind the token gate like every other /api route —
+/// it writes attacker-controlled bytes to disk, so an open POST would be a
+/// disk-fill primitive.
+#[tokio::test]
+async fn chart_upload_without_token_returns_401() {
+    let state = make_state();
+    let app = k7s_server::web::server::api_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/charts/upload")
+                .method("POST")
+                .header("content-type", "application/json")
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+/// Happy path + round-trip: upload a real (tiny) chart package, read the
+/// parsed entry fields back out of the response, then prove the library
+/// listing exposes it.
+#[tokio::test]
+async fn chart_upload_stores_parsable_entry() {
+    let state = make_state();
+    let token = auth_token(&state).to_string();
+    let app = k7s_server::web::server::api_router(state);
+
+    let body = k7s_deps::serde_json::json!({
+        "filename": "web-demo-1.0.0.tgz",
+        "contentBase64": chart_b64(&chart_tgz_bytes("web-demo", "1.0.0")),
+    });
+    let response = app
+        .clone()
+        .oneshot(chart_upload_request(&token, body.to_string()))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let json = body_json(response).await;
+    assert_eq!(json.get("ok").and_then(|v| v.as_bool()), Some(true));
+    let data = json.get("data").expect("response should have data field");
+    assert_eq!(data.get("name").and_then(|v| v.as_str()), Some("web-demo"));
+    assert_eq!(data.get("version").and_then(|v| v.as_str()), Some("1.0.0"));
+    assert_eq!(
+        data.get("id").and_then(|v| v.as_str()),
+        Some("web-demo-1.0.0")
+    );
+
+    // Round-trip: the listing route (registry dispatch) sees the chart.
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/invoke/local_charts_list")
+                .method("POST")
+                .header("content-type", "application/json")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let json = body_json(response).await;
+    assert_eq!(json.get("ok").and_then(|v| v.as_bool()), Some(true));
+    let entries = json
+        .get("data")
+        .and_then(|v| v.as_array())
+        .expect("data should be an entry array");
+    assert!(entries.iter().any(|e| {
+        e.get("name").and_then(|v| v.as_str()) == Some("web-demo")
+            && e.get("version").and_then(|v| v.as_str()) == Some("1.0.0")
+    }));
+}
+
+/// Invalid uploads come back in the uniform error envelope (200 + ok:false,
+/// the house convention from types.rs): non-gzip content and non-chart
+/// filenames are refused by import_chart_bytes. A body that isn't JSON at
+/// all is a transport-level 4xx from the axum::Json extractor. (The 90MB
+/// route body limit → 413 isn't restated here — it would mean allocating a
+/// 90MB payload per run; the decoded-size gate is unit-tested in local.rs.)
+#[tokio::test]
+async fn chart_upload_rejects_invalid_payloads() {
+    let state = make_state();
+    let token = auth_token(&state).to_string();
+    let app = k7s_server::web::server::api_router(state);
+
+    // (a) non-gzip content → error envelope naming the gzip check.
+    let response = app
+        .clone()
+        .oneshot(chart_upload_request(
+            &token,
+            k7s_deps::serde_json::json!({
+                "filename": "evil.tgz",
+                "contentBase64": chart_b64(b"plain text, not gzip"),
+            })
+            .to_string(),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let json = body_json(response).await;
+    assert_eq!(json.get("ok").and_then(|v| v.as_bool()), Some(false));
+    assert!(
+        json.get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .contains("gzip"),
+        "error must point at the gzip gate, got: {json}"
+    );
+
+    // (b) valid gzip, wrong extension → refused before any write.
+    let response = app
+        .clone()
+        .oneshot(chart_upload_request(
+            &token,
+            k7s_deps::serde_json::json!({
+                "filename": "evil.exe",
+                "contentBase64": chart_b64(&chart_tgz_bytes("evil", "1.0.0")),
+            })
+            .to_string(),
+        ))
+        .await
+        .unwrap();
+    let json = body_json(response).await;
+    assert_eq!(json.get("ok").and_then(|v| v.as_bool()), Some(false));
+
+    // (c) malformed JSON body → 4xx from the extractor, before the handler.
+    let response = app
+        .oneshot(chart_upload_request(&token, "{not json".to_string()))
+        .await
+        .unwrap();
+    assert!(
+        response.status().is_client_error(),
+        "malformed JSON must be a 4xx, got {}",
+        response.status()
+    );
+}
