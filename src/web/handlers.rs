@@ -272,3 +272,34 @@ pub async fn version() -> axum::response::Response {
         "bin": "k7s-web",
     })))
 }
+
+// ---------------------------------------------------------------------------
+// local chart upload — browser equivalent of the desktop import. A dedicated
+// route (not the registry catch-all) because chart packages routinely exceed
+// axum's 2MB default body limit; base64 of the 50MB cap is ~67MB, so the
+// route limit sits at 90MB. The 50MB *decoded* cap still applies inside
+// import_chart_bytes.
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalChartUploadArgs {
+    pub filename: String,
+    pub content_base64: String,
+}
+
+/// `POST /api/charts/upload` — store an uploaded `.tgz` into the local chart
+/// library and return its parsed entry. Auth-protected like every /api route.
+pub async fn local_chart_upload(
+    axum::extract::State(state): axum::extract::State<WebState>,
+    axum::Json(args): axum::Json<LocalChartUploadArgs>,
+) -> axum::response::Response {
+    let core = state.core.clone();
+    let result: AppResult<k7s_core::kube::helm::local::LocalChartEntry> =
+        k7s_commands::commands::helm::local_chart_import_content_impl(
+            core,
+            args.filename,
+            args.content_base64,
+        );
+    respond(result)
+}

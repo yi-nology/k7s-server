@@ -159,6 +159,14 @@ pub fn api_router(state: WebState) -> Router {
             "/api/invoke/import_kubeconfig_content",
             post(handlers::import_kubeconfig_content),
         )
+        // Local chart library upload — same JSON+base64 shape as the
+        // kubeconfig import above, but with a raised body limit: the 50MB
+        // decoded cap becomes ~67MB after base64, over axum's 2MB default.
+        .route(
+            "/api/charts/upload",
+            post(handlers::local_chart_upload)
+                .layer(axum::extract::DefaultBodyLimit::max(90 * 1024 * 1024)),
+        )
         // Everything else (mutations, log streaming, interactive shells,
         // EndpointSlices, …) goes through the registry catch-all below —
         // same business logic as the Tauri shell, same wire names.
