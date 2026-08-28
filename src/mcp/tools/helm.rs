@@ -36,6 +36,9 @@ pub(crate) async fn helm_install(
         values: p.values,
         dry_run: p.dry_run,
         create_namespace: p.create_namespace,
+        set: None,
+        atomic: false,
+        timeout_secs: None,
     });
     let result = ops::run_op(op, sink).await.map_err(tool_error)?;
     json_result(&result)
@@ -56,6 +59,11 @@ pub(crate) async fn helm_upgrade(
         dry_run: p.dry_run,
         reuse_values: p.reuse_values,
         rollback_on_failure: p.rollback_on_failure,
+        set: None,
+        atomic: false,
+        force: false,
+        create_namespace: false,
+        timeout_secs: None,
     });
     let result = ops::run_op(op, sink).await.map_err(tool_error)?;
     json_result(&result)
