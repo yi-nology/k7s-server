@@ -20,9 +20,7 @@ use k7s_core::core::shell_common;
 use k7s_core::error::{AppError, AppResult};
 use k7s_core::kube::{
     client::{self, contexts_from_kubeconfig},
-    kubeconfig_check::{
-        has_errors, summarize_issues, validate_kubeconfig, ImportKubeconfigResult,
-    },
+    kubeconfig_check::{has_errors, summarize_issues, validate_kubeconfig, ImportKubeconfigResult},
     manager::ImportedContext,
 };
 

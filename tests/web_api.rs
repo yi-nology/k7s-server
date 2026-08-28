@@ -684,14 +684,12 @@ async fn import_kubeconfig_succeeds_with_warnings() {
             .any(|i| i.get("code").and_then(|c| c.as_str()) == Some("noCredentials")),
         "expected a noCredentials warning: {issues:?}"
     );
-    assert!(
-        !data
-            .get("contexts")
-            .expect("contexts")
-            .as_array()
-            .expect("arr")
-            .is_empty()
-    );
+    assert!(!data
+        .get("contexts")
+        .expect("contexts")
+        .as_array()
+        .expect("arr")
+        .is_empty());
 }
 
 // ---------------------------------------------------------------------------
