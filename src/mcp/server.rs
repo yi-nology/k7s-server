@@ -677,6 +677,57 @@ impl K7sMcpServer {
         helm::helm_update_repo(p).await
     }
 
+    // -----------------------------------------------------------------------
+    // Local chart library (offline)
+    // -----------------------------------------------------------------------
+
+    #[tool(
+        description = "List the offline local chart library (the same charts the UI's ChartOps view shows: .tgz packages and unpacked chart dirs, with name, version, appVersion, size, and path). Works without a cluster connection."
+    )]
+    async fn helm_local_charts(&self) -> Result<CallToolResult, McpError> {
+        helm::helm_local_charts(&self.core.data_dir).await
+    }
+
+    #[tool(
+        description = "Render a chart's Kubernetes templates offline (helm template -- no cluster contact, nothing applied). chart may be repo/name, an OCI URL, or a local library path; values is values.yaml content overriding the defaults (empty = chart defaults). Returns the rendered YAML manifest. Requires the helm binary on the server host."
+    )]
+    async fn helm_render_preview(
+        &self,
+        Parameters(p): Parameters<HelmRenderPreviewParams>,
+    ) -> Result<CallToolResult, McpError> {
+        helm::helm_render_preview(p).await
+    }
+
+    #[tool(
+        description = "Run helm lint on a chart from the local chart library (id from helm_local_charts). Offline -- no cluster contact. Returns helm's lint report."
+    )]
+    async fn helm_lint_chart(
+        &self,
+        Parameters(p): Parameters<HelmChartIdParams>,
+    ) -> Result<CallToolResult, McpError> {
+        helm::helm_lint_chart(&self.core.data_dir, p).await
+    }
+
+    #[tool(
+        description = "Package an unpacked dir chart from the local chart library into a .tgz (helm package; writes <library>/<name>-<version>.tgz next to the source). Charts that are already packaged are refused. Requires the helm binary on the server host. Returns the new archive's library entry."
+    )]
+    async fn helm_package_chart(
+        &self,
+        Parameters(p): Parameters<HelmChartIdParams>,
+    ) -> Result<CallToolResult, McpError> {
+        helm::helm_package_chart(&self.core.data_dir, p).await
+    }
+
+    #[tool(
+        description = "Run helm dependency list|build|update on a chart from the local chart library. action=list is offline (shows declared deps); build/update fetch dependency charts from their repositories into the chart's charts/ dir. Returns the command's report."
+    )]
+    async fn helm_chart_deps(
+        &self,
+        Parameters(p): Parameters<HelmChartDepsParams>,
+    ) -> Result<CallToolResult, McpError> {
+        helm::helm_chart_deps(&self.core.data_dir, p).await
+    }
+
     // === Monitoring tools ===
     // Monitoring, image registry, image sync, and enhanced AI integration tools
 
@@ -1086,6 +1137,10 @@ impl rmcp::ServerHandler for K7sMcpServer {
              `helm_rollback` / `helm_history` / `helm_show_values` / \
              `helm_list_repos` / `helm_search_charts` / `helm_add_repo` / \
              `helm_remove_repo` / `helm_update_repo`. \
+             Local chart library (offline): `helm_local_charts` / \
+             `helm_render_preview` / `helm_lint_chart` / \
+             `helm_package_chart` / `helm_chart_deps` (lint/preview/list are \
+             offline; package/build/update need the helm binary on the host). \
              Execution: `exec_command` (one-shot) or `start_shell` (interactive); \
              `start_node_shell` for a node root shell. \
              Pod files: `pod_list_files` / `pod_read_file` / `pod_write_file` / \

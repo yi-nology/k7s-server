@@ -290,6 +290,44 @@ pub struct HelmRepoNameParams {
 }
 
 // ---------------------------------------------------------------------------
+// Local chart library parameter types
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct HelmRenderPreviewParams {
+    /// Chart reference: `repo/name`, an OCI URL, or a local path (helm
+    /// natively accepts all three). Required.
+    pub chart: String,
+    /// Chart version. Empty = latest.
+    #[serde(default)]
+    pub version: String,
+    /// values.yaml content to override the chart defaults. Empty = chart
+    /// defaults.
+    #[serde(default)]
+    pub values: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct HelmChartIdParams {
+    /// The `id` of a chart in the local library, as returned by
+    /// `helm_local_charts`. Required.
+    pub id: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct HelmChartDepsParams {
+    /// The `id` of a chart in the local library, as returned by
+    /// `helm_local_charts`. Required.
+    pub id: String,
+    /// Which `helm dependency` subcommand: `list` (offline), `build` or
+    /// `update` (both fetch dependency charts from their repos).
+    pub action: String,
+}
+
+// ---------------------------------------------------------------------------
 // Exec / rollout / top / cronjob parameter types
 // ---------------------------------------------------------------------------
 

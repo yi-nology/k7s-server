@@ -1,15 +1,18 @@
 //! Helm tool bodies: release operations (install / upgrade / uninstall /
-//! rollback / history) and chart repository management.
+//! rollback / history), chart repository management, and the local offline
+//! chart library (scan / render preview / lint / package / dependencies).
 //!
 //! Every function here is the body of a `#[tool]` method on
 //! [`K7sMcpServer`](crate::mcp::server::K7sMcpServer); the method in
 //! `server.rs` is a one-line wrapper that forwards the parsed parameters.
 
+use std::path::Path;
 use std::sync::Arc;
 
 use rmcp::model::{CallToolResult, ContentBlock, ErrorData as McpError};
 
-use k7s_core::kube::{helm::market, helm::ops, manager::ClientManager};
+use k7s_core::kube::helm::{local, market, ops};
+use k7s_core::kube::manager::ClientManager;
 
 use crate::mcp::helpers::{json_result, tool_error};
 use crate::mcp::kube_api;
@@ -170,6 +173,72 @@ pub(crate) async fn helm_update_repo(p: HelmRepoNameParams) -> Result<CallToolRe
         .await
         .map_err(tool_error)?;
     json_result(&repo)
+}
+
+// -----------------------------------------------------------------------
+// Local chart library (offline)
+// -----------------------------------------------------------------------
+
+/// The local chart library root: `<data_dir>/charts` — the same directory
+/// the Tauri command layer's `local_chart_root` uses, so MCP and the
+/// desktop/web UI see one library.
+fn local_chart_root(data_dir: &Path) -> std::path::PathBuf {
+    data_dir.join("charts")
+}
+
+pub(crate) async fn helm_local_charts(data_dir: &Path) -> Result<CallToolResult, McpError> {
+    let entries = local::scan_local_charts(&local_chart_root(data_dir)).map_err(tool_error)?;
+    json_result(&entries)
+}
+
+pub(crate) async fn helm_render_preview(
+    p: HelmRenderPreviewParams,
+) -> Result<CallToolResult, McpError> {
+    let manifest = ops::render_chart_templates(&p.chart, &p.version, &p.values, None)
+        .await
+        .map_err(tool_error)?;
+    Ok(CallToolResult::success(vec![ContentBlock::text(manifest)]))
+}
+
+pub(crate) async fn helm_lint_chart(
+    data_dir: &Path,
+    p: HelmChartIdParams,
+) -> Result<CallToolResult, McpError> {
+    let report = local::lint_chart(&local_chart_root(data_dir), &p.id)
+        .await
+        .map_err(tool_error)?;
+    Ok(CallToolResult::success(vec![ContentBlock::text(report)]))
+}
+
+pub(crate) async fn helm_package_chart(
+    data_dir: &Path,
+    p: HelmChartIdParams,
+) -> Result<CallToolResult, McpError> {
+    let entry = local::package_chart(&local_chart_root(data_dir), &p.id)
+        .await
+        .map_err(tool_error)?;
+    json_result(&entry)
+}
+
+pub(crate) async fn helm_chart_deps(
+    data_dir: &Path,
+    p: HelmChartDepsParams,
+) -> Result<CallToolResult, McpError> {
+    let action = match p.action.as_str() {
+        "list" => local::DepsAction::List,
+        "build" => local::DepsAction::Build,
+        "update" => local::DepsAction::Update,
+        other => {
+            return Err(McpError::invalid_params(
+                format!("unknown action '{other}': use list|build|update"),
+                None,
+            ))
+        }
+    };
+    let report = local::chart_deps(&local_chart_root(data_dir), &p.id, action)
+        .await
+        .map_err(tool_error)?;
+    Ok(CallToolResult::success(vec![ContentBlock::text(report)]))
 }
 
 // -----------------------------------------------------------------------
