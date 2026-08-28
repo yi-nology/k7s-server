@@ -176,18 +176,13 @@ pub(crate) async fn helm_update_repo(p: HelmRepoNameParams) -> Result<CallToolRe
 }
 
 // -----------------------------------------------------------------------
-// Local chart library (offline)
+// Local chart library (offline) — rooted at `local::charts_dir(data_dir)`
+// (`<data_dir>/charts`), the same directory the Tauri command layer uses,
+// so MCP and the desktop/web UI see one library.
 // -----------------------------------------------------------------------
 
-/// The local chart library root: `<data_dir>/charts` — the same directory
-/// the Tauri command layer's `local_chart_root` uses, so MCP and the
-/// desktop/web UI see one library.
-fn local_chart_root(data_dir: &Path) -> std::path::PathBuf {
-    data_dir.join("charts")
-}
-
 pub(crate) async fn helm_local_charts(data_dir: &Path) -> Result<CallToolResult, McpError> {
-    let entries = local::scan_local_charts(&local_chart_root(data_dir)).map_err(tool_error)?;
+    let entries = local::scan_local_charts(&local::charts_dir(data_dir)).map_err(tool_error)?;
     json_result(&entries)
 }
 
@@ -204,7 +199,7 @@ pub(crate) async fn helm_lint_chart(
     data_dir: &Path,
     p: HelmChartIdParams,
 ) -> Result<CallToolResult, McpError> {
-    let report = local::lint_chart(&local_chart_root(data_dir), &p.id)
+    let report = local::lint_chart(&local::charts_dir(data_dir), &p.id)
         .await
         .map_err(tool_error)?;
     Ok(CallToolResult::success(vec![ContentBlock::text(report)]))
@@ -214,7 +209,7 @@ pub(crate) async fn helm_package_chart(
     data_dir: &Path,
     p: HelmChartIdParams,
 ) -> Result<CallToolResult, McpError> {
-    let entry = local::package_chart(&local_chart_root(data_dir), &p.id)
+    let entry = local::package_chart(&local::charts_dir(data_dir), &p.id)
         .await
         .map_err(tool_error)?;
     json_result(&entry)
@@ -235,7 +230,7 @@ pub(crate) async fn helm_chart_deps(
             ))
         }
     };
-    let report = local::chart_deps(&local_chart_root(data_dir), &p.id, action)
+    let report = local::chart_deps(&local::charts_dir(data_dir), &p.id, action)
         .await
         .map_err(tool_error)?;
     Ok(CallToolResult::success(vec![ContentBlock::text(report)]))
