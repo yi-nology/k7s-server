@@ -579,6 +579,121 @@ async fn import_kubeconfig_rejects_invalid_yaml() {
     assert!(json.get("error").is_some());
 }
 
+#[tokio::test]
+async fn import_kubeconfig_reports_validation_issues() {
+    let state = make_state();
+    let token = auth_token(&state).to_string();
+    let app = k7s_server::web::server::api_router(state);
+
+    let body = k7s_deps::serde_json::json!({
+        "filename": "broken.yaml",
+        "contents": k7s_deps::serde_json::to_string(&k7s_deps::serde_json::json!({
+            "apiVersion": "v1",
+            "kind": "Config",
+            "clusters": [],
+            "contexts": [{"name": "c1", "context": {"cluster": "nope", "user": "nobody"}}],
+            "users": []
+        }))
+        .unwrap()
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/invoke/import_kubeconfig_content")
+                .method("POST")
+                .header("content-type", "application/json")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let json = body_json(response).await;
+    assert_eq!(
+        json.get("ok"),
+        Some(&k7s_deps::serde_json::Value::Bool(false))
+    );
+    let error = json
+        .get("error")
+        .and_then(|v| v.as_str())
+        .expect("error string");
+    assert!(
+        error.contains("kubeconfig validation failed"),
+        "got: {error}"
+    );
+    let issues = json
+        .get("issues")
+        .and_then(|v| v.as_array())
+        .expect("issues array");
+    assert!(
+        issues
+            .iter()
+            .any(|i| i.get("code").and_then(|c| c.as_str()) == Some("missingClusterRef")),
+        "issues should carry stable codes: {issues:?}"
+    );
+}
+
+#[tokio::test]
+async fn import_kubeconfig_succeeds_with_warnings() {
+    let state = make_state();
+    let token = auth_token(&state).to_string();
+    let app = k7s_server::web::server::api_router(state);
+
+    let body = k7s_deps::serde_json::json!({
+        "filename": "warn.yaml",
+        "contents": k7s_deps::serde_json::to_string(&k7s_deps::serde_json::json!({
+            "apiVersion": "v1",
+            "kind": "Config",
+            "clusters": [{"name": "c", "cluster": {"server": "https://127.0.0.1:6443"}}],
+            "contexts": [{"name": "c1", "context": {"cluster": "c", "user": "u"}}],
+            "users": [{"name": "u", "user": {}}]
+        }))
+        .unwrap()
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/invoke/import_kubeconfig_content")
+                .method("POST")
+                .header("content-type", "application/json")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let json = body_json(response).await;
+    assert_eq!(
+        json.get("ok"),
+        Some(&k7s_deps::serde_json::Value::Bool(true))
+    );
+    let data = json.get("data").expect("data");
+    let issues = data
+        .get("issues")
+        .and_then(|v| v.as_array())
+        .expect("issues on success");
+    assert!(
+        issues
+            .iter()
+            .any(|i| i.get("code").and_then(|c| c.as_str()) == Some("noCredentials")),
+        "expected a noCredentials warning: {issues:?}"
+    );
+    assert!(
+        !data
+            .get("contexts")
+            .expect("contexts")
+            .as_array()
+            .expect("arr")
+            .is_empty()
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Connect without cluster
 // ---------------------------------------------------------------------------

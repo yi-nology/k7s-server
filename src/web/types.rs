@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use k7s_core::core::prefs::Prefs;
 use k7s_core::error::AppResult;
-use k7s_core::kube::client::ContextInfo;
+use k7s_core::kube::kubeconfig_check::KubeconfigIssue;
 
 // ---------------------------------------------------------------------------
 // Response envelopes — every command has the same shape on the wire.
@@ -31,6 +31,24 @@ pub struct InvokeResponse<T: Serialize> {
 pub struct InvokeError {
     pub ok: bool,
     pub error: String,
+}
+
+/// Failure envelope for commands that carry structured diagnostics. Only
+/// `import_kubeconfig_content` uses it today: `error` is the human-readable
+/// summary, `issues` the per-context details the UI lists verbatim.
+#[derive(Serialize)]
+pub struct InvokeErrorWithIssues {
+    pub ok: bool,
+    pub error: String,
+    pub issues: Vec<KubeconfigIssue>,
+}
+
+impl IntoResponse for InvokeErrorWithIssues {
+    fn into_response(self) -> axum::response::Response {
+        // Same 200-with-{ok:false} contract as `InvokeError` — see the
+        // comment there for why errors are not 4xx.
+        (StatusCode::OK, Json(self)).into_response()
+    }
 }
 
 impl<T: Serialize> IntoResponse for InvokeResponse<T> {
@@ -139,13 +157,9 @@ pub struct StatusDto {
     pub watcher_count: usize,
 }
 
-/// Wire shape for `import_kubeconfig_content`. Mirrors the Tauri `ImportResult`
-/// 1:1 so the front-end can use the same TypeScript type for both shells.
-#[derive(Serialize)]
-pub struct ImportResultWire {
-    pub contexts: Vec<ContextInfo>,
-    pub path: String,
-}
+// `import_kubeconfig_content` now returns the shared `ImportKubeconfigResult`
+// from k7s-core (contexts + path + warnings), so the front-end uses one
+// TypeScript type for both shells.
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]

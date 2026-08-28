@@ -19,7 +19,10 @@ use k7s_core::core::prefs::{self, Prefs};
 use k7s_core::core::shell_common;
 use k7s_core::error::{AppError, AppResult};
 use k7s_core::kube::{
-    client::{self, ContextInfo},
+    client::{self, contexts_from_kubeconfig},
+    kubeconfig_check::{
+        has_errors, summarize_issues, validate_kubeconfig, ImportKubeconfigResult,
+    },
     manager::ImportedContext,
 };
 
@@ -93,63 +96,63 @@ pub async fn save_prefs(
 // ---------------------------------------------------------------------------
 
 /// `POST /api/invoke/import_kubeconfig_content` — parse a kubeconfig the
-/// user picked in the browser, register every context in the manager, and
-/// return the merged switcher list.
+/// user picked in the browser, validate it, register every context in the
+/// manager, and return the merged switcher list.
 pub async fn import_kubeconfig_content(
     State(state): State<WebState>,
     Json(args): Json<ImportKubeconfigContentArgs>,
 ) -> axum::response::Response {
     let core = state.core.clone();
-    let result: AppResult<ImportResultWire> = async {
-        // Parse the YAML exactly like `client::contexts_from_file` does for
-        // the Tauri path, so the two shells agree on the wire shape and
-        // what "unparseable" looks like to the user.
-        let kc = Kubeconfig::from_yaml(&args.contents)
-            .map_err(|e| AppError::Kubeconfig(format!("couldn't parse {}: {e}", args.filename)))?;
-
-        let imported: Vec<ContextInfo> = kc
-            .contexts
-            .iter()
-            .map(|ctx| {
-                let cluster = ctx
-                    .context
-                    .as_ref()
-                    .map(|c| c.cluster.clone())
-                    .unwrap_or_default();
-                ContextInfo {
-                    name: ctx.name.clone(),
-                    cluster,
-                    current: false,
-                }
-            })
-            .collect();
-
-        // Register each context so a later `connect` builds from this file.
-        // We stash the parsed `Kubeconfig` (rather than the file path)
-        // because the web shell has no real file on disk — the bytes came
-        // from the user's `<input type="file">` and are gone the moment
-        // they pick again.
-        for ctx in &imported {
-            core.manager
-                .add_import(
-                    ctx.name.clone(),
-                    ImportedContext {
-                        path: args.filename.clone(),
-                        cluster: ctx.cluster.clone(),
-                        kubeconfig: Some(kc.clone()),
-                    },
-                )
-                .await;
+    // Phase 1: parse. The serde_yaml error already carries line/column —
+    // surface it verbatim so the UI can show exactly where the YAML breaks.
+    let kc = match Kubeconfig::from_yaml(&args.contents) {
+        Ok(kc) => kc,
+        Err(e) => {
+            return respond::<ImportKubeconfigResult>(Err(AppError::Kubeconfig(format!(
+                "couldn't parse {}: {e}",
+                args.filename
+            ))))
         }
+    };
 
-        let merged = shell_common::merged_contexts(&core.manager).await;
-        Ok(ImportResultWire {
-            contexts: merged,
-            path: args.filename,
-        })
+    // Phase 2: validate. Error-level issues block the import and go back as
+    // a structured failure the UI can itemize; warnings ride along with the
+    // success payload.
+    let issues = validate_kubeconfig(&kc);
+    if has_errors(&issues) {
+        return InvokeErrorWithIssues {
+            ok: false,
+            error: summarize_issues(&issues),
+            issues,
+        }
+        .into_response();
     }
-    .await;
-    respond(result)
+
+    let imported = contexts_from_kubeconfig(&kc);
+
+    // Register each context so a later `connect` builds from this file.
+    // We stash the parsed `Kubeconfig` (rather than the file path) because
+    // the web shell has no real file on disk — the bytes came from the
+    // user's `<input type="file">` and are gone the moment they pick again.
+    for ctx in &imported {
+        core.manager
+            .add_import(
+                ctx.name.clone(),
+                ImportedContext {
+                    path: args.filename.clone(),
+                    cluster: ctx.cluster.clone(),
+                    kubeconfig: Some(kc.clone()),
+                },
+            )
+            .await;
+    }
+
+    let merged = shell_common::merged_contexts(&core.manager).await;
+    respond(Ok(ImportKubeconfigResult {
+        contexts: merged,
+        path: args.filename,
+        issues,
+    }))
 }
 
 // ---------------------------------------------------------------------------
