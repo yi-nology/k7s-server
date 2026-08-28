@@ -14,7 +14,10 @@ use serde::Serialize;
 use k7s_core::core::shell_common::validate_apply_yaml;
 use k7s_core::error::AppError;
 use k7s_core::kube::{
-    client as kube_client, drain, endpoints,
+    client as kube_client,
+    client::contexts_from_kubeconfig,
+    drain, endpoints,
+    kubeconfig_check::{has_errors, summarize_issues, validate_kubeconfig, ImportKubeconfigResult},
     manager::{ClientManager, ImportedContext},
     templates,
 };
@@ -456,20 +459,20 @@ pub(crate) async fn import_kubeconfig(
     manager: &Arc<ClientManager>,
     p: ImportKubeconfigParams,
 ) -> Result<CallToolResult, McpError> {
+    // Same two-phase import as the web/desktop shells: parse, then validate.
     let kc = k7s_deps::kube::config::Kubeconfig::from_yaml(&p.contents)
         .map_err(|e| tool_error(AppError::Kubeconfig(format!("parse kubeconfig: {e}"))))?;
-    for ctx in &kc.contexts {
-        let cluster = ctx
-            .context
-            .as_ref()
-            .map(|c| c.cluster.clone())
-            .unwrap_or_default();
+    let issues = validate_kubeconfig(&kc);
+    if has_errors(&issues) {
+        return Err(tool_error(AppError::Kubeconfig(summarize_issues(&issues))));
+    }
+    for ctx in contexts_from_kubeconfig(&kc) {
         manager
             .add_import(
                 ctx.name.clone(),
                 ImportedContext {
                     path: p.filename.clone(),
-                    cluster,
+                    cluster: ctx.cluster,
                     kubeconfig: Some(kc.clone()),
                 },
             )
@@ -488,7 +491,13 @@ pub(crate) async fn import_kubeconfig(
             });
         }
     }
-    json_result(&merged)
+    // Warnings ride along so the assistant can surface them ("imported, but
+    // this kubeconfig has no CA bundle") — same payload the UI shells get.
+    json_result(&ImportKubeconfigResult {
+        contexts: merged,
+        path: p.filename,
+        issues,
+    })
 }
 
 // -----------------------------------------------------------------------
