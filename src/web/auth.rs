@@ -178,6 +178,14 @@ fn cookie_session(req: &Request<Body>, state: &WebState) -> Option<()> {
 mod tests {
     use super::*;
 
+    /// Serialises the tests around [`resolve_token`], which reads the
+    /// process-global `K7S_WEB_TOKEN` env var on every call: one test sets
+    /// and clears it while another asserts file-based generation, and the
+    /// parallel test runner would otherwise interleave the two. Poisoning is
+    /// tolerated so a panicking test doesn't cascade into the next one
+    /// (same style as the `password_auth` lock above).
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn constant_time_eq_basic() {
         assert!(constant_time_eq(b"abc", b"abc"));
@@ -189,6 +197,10 @@ mod tests {
 
     #[test]
     fn resolve_token_round_trips_file() {
+        // Held even though this test never sets the var: a concurrent
+        // `resolve_token_env_wins` would leak its value into the
+        // env-first branch of `resolve_token`.
+        let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let dir = std::env::temp_dir().join("k7s-web-token-test");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
@@ -203,6 +215,7 @@ mod tests {
 
     #[test]
     fn resolve_token_env_wins() {
+        let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let dir = std::env::temp_dir().join("k7s-web-token-env-test");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
