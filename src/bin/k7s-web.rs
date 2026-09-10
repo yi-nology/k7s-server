@@ -94,7 +94,7 @@ async fn main() -> std::io::Result<()> {
     // Determine whether to use embedded assets.
     let use_embedded = args.static_dir.is_none();
 
-    let state = WebState::new(data_dir.clone(), addr);
+    let state = WebState::new(data_dir.clone(), addr).with_tls_enabled(tls.is_some());
 
     // Process-wide audit log target — before any command can fire.
     k7s_core::core::audit::set_dir(data_dir.clone());

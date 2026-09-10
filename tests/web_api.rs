@@ -229,7 +229,11 @@ async fn setup_on_non_loopback_requires_setup_token() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
 
-    // (c) Matching header claims the password: 200 + Secure session cookie.
+    // (c) Matching header claims the password: 200 + session cookie. The
+    // cookie's `Secure` flag follows the wire scheme — this request travels
+    // plain http (no `X-Forwarded-Proto: https` hop, no `--tls-cert`), so the
+    // cookie must NOT be Secure: browsers would refuse it and remote login
+    // would be impossible without TLS at every hop.
     let response = app
         .clone()
         .oneshot(setup_request(Some("claim-secret")))
@@ -242,7 +246,31 @@ async fn setup_on_non_loopback_requires_setup_token() {
         .and_then(|v| v.to_str().ok())
         .unwrap_or_default()
         .to_string();
-    assert!(cookie.contains("Secure"), "got: {cookie}");
+    assert!(
+        !cookie.contains("Secure"),
+        "plain-http session cookie must not be Secure, got: {cookie}"
+    );
+
+    // (c2) A login behind an https-terminating proxy restores the flag.
+    let login_https = Request::builder()
+        .method("POST")
+        .uri("/api/auth/login")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header("x-forwarded-proto", "https")
+        .body(Body::from(r#"{"password":"correct-horse-battery"}"#))
+        .unwrap();
+    let response = app.clone().oneshot(login_https).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let cookie = response
+        .headers()
+        .get(header::SET_COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
+    assert!(
+        cookie.contains("Secure"),
+        "proxied https login cookie must be Secure, got: {cookie}"
+    );
 
     // (d) The claim is one-shot: a second (still correctly signed) setup
     // hits the already-configured conflict.
