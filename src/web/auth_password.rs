@@ -293,7 +293,7 @@ pub async fn auth_setup(
     (
         [(
             SET_COOKIE,
-            PasswordAuth::cookie_of(&token, !state.is_loopback),
+            PasswordAuth::cookie_of(&token, cookie_secure(&headers, &state)),
         )],
         Json(json!({"ok": true})),
     )
@@ -330,6 +330,7 @@ fn clear_login_failures() {
 
 pub async fn auth_login(
     State(state): State<WebState>,
+    headers: axum::http::HeaderMap,
     Json(body): Json<k7s_deps::serde_json::Value>,
 ) -> Response {
     let Some(pwd) = body["password"].as_str() else {
@@ -368,11 +369,28 @@ pub async fn auth_login(
     (
         [(
             SET_COOKIE,
-            PasswordAuth::cookie_of(&token, !state.is_loopback),
+            PasswordAuth::cookie_of(&token, cookie_secure(&headers, &state)),
         )],
         Json(json!({"ok": true})),
     )
         .into_response()
+}
+
+/// Decide the session cookie's `Secure` attribute from the *actual* wire
+/// scheme instead of the bind address. `Secure` is required when this process
+/// terminated TLS itself or a reverse proxy forwarded an
+/// `X-Forwarded-Proto: https` hop; plain-HTTP clients get a non-Secure cookie
+/// so the single-user login works on plaintext LANs (the session then only
+/// travels that plaintext — the startup WARN already covers the trade-off).
+/// Browsers refuse Secure cookies over plain HTTP, which used to make remote
+/// password login impossible without TLS at every hop.
+fn cookie_secure(headers: &axum::http::HeaderMap, state: &WebState) -> bool {
+    state.tls_enabled
+        || headers
+            .get("x-forwarded-proto")
+            .and_then(|v| v.to_str().ok())
+            .map(|v| v.eq_ignore_ascii_case("https"))
+            .unwrap_or(false)
 }
 
 pub async fn auth_logout(
@@ -387,7 +405,10 @@ pub async fn auth_logout(
             .drop_session(&t);
     }
     (
-        [(SET_COOKIE, PasswordAuth::clear_cookie(!state.is_loopback))],
+        [(
+            SET_COOKIE,
+            PasswordAuth::clear_cookie(cookie_secure(req.headers(), &state)),
+        )],
         Json(json!({"ok": true})),
     )
         .into_response()
@@ -758,8 +779,9 @@ mod tests {
             assert_eq!(resp.status(), StatusCode::OK);
             let cookie = set_cookie(&resp);
             assert!(
-                cookie.contains("Secure"),
-                "non-loopback session cookie must be Secure, got: {cookie}"
+                !cookie.contains("Secure"),
+                "plain-http session cookie must not be Secure (Secure now \
+                 follows the wire scheme, not the bind address), got: {cookie}"
             );
             let pair = cookie.split(';').next().unwrap().to_string();
             let st = status(&app, Some(&pair)).await;
@@ -786,6 +808,107 @@ mod tests {
                 "dropped session must re-gate"
             );
             assert_eq!(st["configured"], json!(true));
+        }
+
+        /// The `Secure` flag follows the *wire scheme*, not the bind address:
+        /// a plain-HTTP login issues a non-Secure cookie (browsers would
+        /// refuse a Secure one over http — the "can't log in over plain http"
+        /// bug), a login behind an https-terminating proxy
+        /// (`X-Forwarded-Proto: https`) keeps the flag, and so does TLS
+        /// terminated by this process (`tls_enabled`). Setup here is done
+        /// in-memory via [`PasswordAuth::setup`] so the test never touches
+        /// the `K7S_SETUP_TOKEN` env var the non-loopback router tests race
+        /// around.
+        #[tokio::test]
+        async fn cookie_secure_follows_wire_scheme() {
+            let addr: std::net::SocketAddr = "10.10.0.3:7180".parse().unwrap();
+            let configured_state = |tag: &str| {
+                let state = test_state_at(tag, "10.10.0.3:7180");
+                assert!(!state.is_loopback, "test premise: non-loopback bind");
+                state
+                    .password_auth
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .setup("correct-horse-battery")
+                    .unwrap();
+                state
+            };
+
+            // (a) Plain HTTP (no proxy hop, no self-TLS): no Secure flag.
+            let app = server::router(
+                configured_state("scheme-plain"),
+                Some(static_dir("scheme-plain")),
+                false,
+                addr,
+                false,
+            );
+            let resp = app
+                .clone()
+                .oneshot(post_json(
+                    "/api/auth/login",
+                    None,
+                    json!({"password": "correct-horse-battery"}).to_string(),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::OK);
+            let cookie = set_cookie(&resp);
+            assert!(cookie.starts_with("k7s_session="));
+            assert!(
+                !cookie.contains("Secure"),
+                "plain-http login cookie must not be Secure, got: {cookie}"
+            );
+
+            // (b) Same bind, but the login arrives through an https-terminating
+            // reverse proxy: the forwarded https hop restores the flag.
+            let app = server::router(
+                configured_state("scheme-proxy"),
+                Some(static_dir("scheme-proxy")),
+                false,
+                addr,
+                false,
+            );
+            let login_https = Request::builder()
+                .method("POST")
+                .uri("/api/auth/login")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header("x-forwarded-proto", "https")
+                .body(Body::from(
+                    json!({"password": "correct-horse-battery"}).to_string(),
+                ))
+                .unwrap();
+            let resp = app.clone().oneshot(login_https).await.unwrap();
+            assert_eq!(resp.status(), StatusCode::OK);
+            let cookie = set_cookie(&resp);
+            assert!(
+                cookie.contains("Secure"),
+                "proxied https login cookie must be Secure, got: {cookie}"
+            );
+
+            // (c) TLS terminated by this process: Secure regardless of any
+            // proxy header — `with_tls_enabled(true)`.
+            let app = server::router(
+                configured_state("scheme-tls").with_tls_enabled(true),
+                Some(static_dir("scheme-tls")),
+                false,
+                addr,
+                false,
+            );
+            let resp = app
+                .clone()
+                .oneshot(post_json(
+                    "/api/auth/login",
+                    None,
+                    json!({"password": "correct-horse-battery"}).to_string(),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::OK);
+            let cookie = set_cookie(&resp);
+            assert!(
+                cookie.contains("Secure"),
+                "self-TLS login cookie must be Secure, got: {cookie}"
+            );
         }
 
         /// `apply_yaml_bundle` must be bridged through the web shell (the P2

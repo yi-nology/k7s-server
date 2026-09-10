@@ -37,6 +37,11 @@ pub struct WebState {
     /// at `GET /api/web-token` (so the same-origin SPA can self-serve it);
     /// non-loopback binds refuse to publish and require `K7S_WEB_TOKEN`.
     pub is_loopback: bool,
+    /// Whether this process terminates TLS itself (`--tls-cert/--tls-key`).
+    /// Together with a reverse proxy's `X-Forwarded-Proto: https` hop header
+    /// it decides the session cookie's `Secure` attribute — see
+    /// [`super::auth_password::cookie_secure`].
+    pub tls_enabled: bool,
     /// Single-user password gate (P1): argon2 hash + in-memory sessions.
     /// `Arc` so the route state and the auth middleware's state clone share
     /// one session map — a plain `Mutex<PasswordAuth>` field would give each
@@ -89,9 +94,18 @@ impl WebState {
             pending_approvals: Arc::new(Mutex::new(HashMap::new())),
             web_token,
             is_loopback,
+            tls_enabled: false,
             password_auth,
             data_dir,
         }
+    }
+
+    /// Mark the server as terminating TLS itself (`--tls-cert/--tls-key`).
+    /// Fluent builder for the `k7s-web` binary, which knows the TLS options
+    /// only after arg parsing — [`WebState::new`] defaults to `false`.
+    pub fn with_tls_enabled(mut self, enabled: bool) -> Self {
+        self.tls_enabled = enabled;
+        self
     }
 
     /// A fresh subscriber for a new SSE connection.
