@@ -105,6 +105,57 @@ pub struct ImportKubeconfigContentArgs {
     pub contents: String,
 }
 
+/// `POST /api/invoke/remove_imported_context` — drop a context that was
+/// imported through this shell (the switcher's remove action).
+#[derive(Deserialize)]
+pub struct RemoveImportedContextArgs {
+    pub context: String,
+}
+
+/// `validate_kubeconfig_content` response — the parsed entities plus every
+/// issue, WITHOUT importing. Always returned inside a success envelope:
+/// `valid: false` with the `issues` list IS the result, because the preview
+/// must render problems, not throw them.
+#[derive(Serialize)]
+pub struct KubeconfigPreview {
+    pub valid: bool,
+    pub issues: Vec<KubeconfigIssue>,
+    pub clusters: Vec<KubeconfigClusterPreview>,
+    pub users: Vec<KubeconfigUserPreview>,
+    pub contexts: Vec<KubeconfigContextPreview>,
+}
+
+/// One `clusters[]` entry of the import preview.
+#[derive(Serialize)]
+pub struct KubeconfigClusterPreview {
+    pub name: String,
+    pub server: String,
+}
+
+/// One `users[]` entry of the import preview. `auth` is a human-readable
+/// auth kind: "client-certificate" | "token" | "username/password" | "exec" |
+/// "auth-provider" | "none" | "unknown".
+#[derive(Serialize)]
+pub struct KubeconfigUserPreview {
+    pub name: String,
+    pub auth: String,
+}
+
+/// One `contexts[]` entry of the import preview.
+#[derive(Serialize)]
+pub struct KubeconfigContextPreview {
+    pub name: String,
+    pub cluster: String,
+    pub user: String,
+    pub current: bool,
+}
+
+/// `remove_imported_context` response — the refreshed switcher list.
+#[derive(Serialize)]
+pub struct RemoveImportedContextResult {
+    pub contexts: Vec<k7s_core::kube::client::ContextInfo>,
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DiagnosePodArgs {

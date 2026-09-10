@@ -20,7 +20,10 @@ use k7s_core::core::shell_common;
 use k7s_core::error::{AppError, AppResult};
 use k7s_core::kube::{
     client::{self, contexts_from_kubeconfig},
-    kubeconfig_check::{has_errors, summarize_issues, validate_kubeconfig, ImportKubeconfigResult},
+    kubeconfig_check::{
+        has_errors, summarize_issues, validate_kubeconfig, ImportKubeconfigResult, IssueSeverity,
+        KubeconfigIssue,
+    },
     manager::ImportedContext,
 };
 
@@ -151,6 +154,129 @@ pub async fn import_kubeconfig_content(
         path: args.filename,
         issues,
     }))
+}
+
+/// `POST /api/invoke/validate_kubeconfig_content` — parse + validate a
+/// kubeconfig WITHOUT importing it. The onboarding wizard's paste mode calls
+/// this for its preview: the user sees the parsed clusters/users/contexts
+/// and every issue (e.g. a context referencing a user that isn't defined)
+/// before committing to an import. Always resolves inside the success
+/// envelope — `valid: false` plus the `issues` list IS the result, because a
+/// preview must render problems, not throw them away.
+pub async fn validate_kubeconfig_content(
+    Json(args): Json<ImportKubeconfigContentArgs>,
+) -> axum::response::Response {
+    let kc = match Kubeconfig::from_yaml(&args.contents) {
+        Ok(kc) => kc,
+        Err(e) => {
+            return respond(Ok(KubeconfigPreview {
+                valid: false,
+                issues: vec![KubeconfigIssue {
+                    severity: IssueSeverity::Error,
+                    code: "parse".into(),
+                    message: format!("couldn't parse {}: {e}", args.filename),
+                    context: None,
+                }],
+                clusters: vec![],
+                users: vec![],
+                contexts: vec![],
+            }))
+        }
+    };
+
+    let issues = validate_kubeconfig(&kc);
+    let clusters: Vec<KubeconfigClusterPreview> = kc
+        .clusters
+        .iter()
+        .map(|nc| KubeconfigClusterPreview {
+            name: nc.name.clone(),
+            server: nc
+                .cluster
+                .as_ref()
+                .and_then(|c| c.server.clone())
+                .unwrap_or_default(),
+        })
+        .collect();
+    let users: Vec<KubeconfigUserPreview> = kc
+        .auth_infos
+        .iter()
+        .map(|nu| KubeconfigUserPreview {
+            name: nu.name.clone(),
+            auth: user_auth_kind(nu.auth_info.as_ref()),
+        })
+        .collect();
+    let contexts: Vec<KubeconfigContextPreview> = kc
+        .contexts
+        .iter()
+        .map(|nc| KubeconfigContextPreview {
+            name: nc.name.clone(),
+            cluster: nc
+                .context
+                .as_ref()
+                .map(|c| c.cluster.clone())
+                .unwrap_or_default(),
+            user: nc
+                .context
+                .as_ref()
+                .and_then(|c| c.user.clone())
+                .unwrap_or_default(),
+            current: kc.current_context.as_deref() == Some(nc.name.as_str()),
+        })
+        .collect();
+
+    respond(Ok(KubeconfigPreview {
+        valid: !has_errors(&issues),
+        issues,
+        clusters,
+        users,
+        contexts,
+    }))
+}
+
+/// Human-readable auth kind for the import preview's user list. Checks in
+/// the order a kubeconfig consumer would: exactly one of these should be
+/// populated, but a file with none gets "none" rather than a lie.
+fn user_auth_kind(user: Option<&k7s_deps::kube::config::AuthInfo>) -> String {
+    let Some(u) = user else {
+        return "none".into();
+    };
+    if u.client_certificate_data.is_some() {
+        "client-certificate".into()
+    } else if u.token.is_some() {
+        "token".into()
+    } else if u.username.is_some() {
+        "username/password".into()
+    } else if u.exec.is_some() {
+        "exec".into()
+    } else if u.auth_provider.is_some() {
+        "auth-provider".into()
+    } else {
+        "unknown".into()
+    }
+}
+
+/// `POST /api/invoke/remove_imported_context` — drop a context that was
+/// imported through this shell (the switcher's remove action). Contexts that
+/// came from the operator's kubeconfig file are refused: the file owns them.
+/// A live connection to the removed context is torn down with it.
+pub async fn remove_imported_context(
+    State(state): State<WebState>,
+    Json(args): Json<RemoveImportedContextArgs>,
+) -> axum::response::Response {
+    let core = state.core.clone();
+    let Some(_removed) = core.manager.remove_import(&args.context).await else {
+        return respond::<RemoveImportedContextResult>(Err(AppError::Other(format!(
+            "{} is not an imported context — only imported ones can be removed",
+            args.context
+        ))));
+    };
+    if let Some(info) = core.manager.connection_info().await {
+        if info.context == args.context {
+            core.manager.reset().await;
+        }
+    }
+    let contexts = shell_common::merged_contexts(&core.manager).await;
+    respond(Ok(RemoveImportedContextResult { contexts }))
 }
 
 // ---------------------------------------------------------------------------

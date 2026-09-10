@@ -488,6 +488,7 @@ pub(crate) async fn import_kubeconfig(
                 name,
                 cluster: imp.cluster,
                 current: false,
+                imported: true,
             });
         }
     }

@@ -159,6 +159,18 @@ pub fn api_router(state: WebState) -> Router {
             "/api/invoke/import_kubeconfig_content",
             post(handlers::import_kubeconfig_content),
         )
+        // Paste-mode preview: parse + validate WITHOUT importing. The wizard
+        // renders the returned clusters/users/contexts and issue list before
+        // the user commits to an import.
+        .route(
+            "/api/invoke/validate_kubeconfig_content",
+            post(handlers::validate_kubeconfig_content),
+        )
+        // Drop a web-imported context (the switcher's remove action).
+        .route(
+            "/api/invoke/remove_imported_context",
+            post(handlers::remove_imported_context),
+        )
         // Local chart library upload — same JSON+base64 shape as the
         // kubeconfig import above, but with a raised body limit: the 50MB
         // decoded cap becomes ~67MB after base64, over axum's 2MB default.
