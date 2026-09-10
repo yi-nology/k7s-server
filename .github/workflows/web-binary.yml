@@ -1,0 +1,62 @@
+name: web-binary
+
+# Manual build of the static aarch64 musl k7s-web binary (the same recipe the
+# hub release workflow uses for its `k7s-web-*-linux-aarch64-musl` asset),
+# published as a workflow artifact so an ops flow can fetch it and rebuild the
+# deployment image without cutting a release tag.
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: web-binary-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  musl-binary:
+    name: build k7s-web (aarch64 musl static)
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "26"
+
+      - name: install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: build frontend (embedded assets)
+        run: |
+          git clone --depth 1 https://github.com/yi-nology/k7s-frontend.git k7s-frontend
+          cd k7s-frontend
+          pnpm install --frozen-lockfile
+          pnpm build
+          cd ..
+          rm -rf dist && cp -r k7s-frontend/dist dist
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-musl
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: install musl-tools
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: build k7s-web (aarch64 musl static)
+        # Note: do NOT strip musl binaries — strip can corrupt them.
+        run: |
+          cargo build --release --features web --bin k7s-web --target aarch64-unknown-linux-musl
+          mkdir -p out
+          cp target/aarch64-unknown-linux-musl/release/k7s-web out/k7s-web
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: k7s-web-aarch64-musl
+          path: out/k7s-web
