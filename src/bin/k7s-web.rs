@@ -96,6 +96,13 @@ async fn main() -> std::io::Result<()> {
 
     let state = WebState::new(data_dir.clone(), addr).with_tls_enabled(tls.is_some());
 
+    // Web imports live in the manager only, so without this every restart
+    // wipes them. Re-register whatever was persisted under the data dir.
+    let restored = k7s_server::web::web_imports::restore(&data_dir, &state.core.manager).await;
+    if restored > 0 {
+        k7s_deps::tracing::info!("restored {restored} imported kubeconfig context(s)");
+    }
+
     // Process-wide audit log target — before any command can fire.
     k7s_core::core::audit::set_dir(data_dir.clone());
     // Scheduled AI tasks (ai_cron_*). Headless: web-mode ReadOnly + approvals

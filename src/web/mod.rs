@@ -32,6 +32,8 @@ pub mod sse;
 pub mod state;
 #[cfg(feature = "web")]
 pub mod types;
+#[cfg(feature = "web")]
+pub mod web_imports;
 
 #[cfg(feature = "web")]
 pub use server::serve;

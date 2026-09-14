@@ -29,6 +29,7 @@ use k7s_core::kube::{
 
 use super::state::WebState;
 use super::types::*;
+use super::web_imports;
 
 // ---------------------------------------------------------------------------
 // list_contexts
@@ -147,6 +148,11 @@ pub async fn import_kubeconfig_content(
             )
             .await;
     }
+
+    // Persist the raw YAML so the import survives restarts (the manager's
+    // registrations are in-memory only). Written 0600 — kubeconfigs carry
+    // client private keys.
+    web_imports::upsert(&core.data_dir, &args.filename, &args.contents);
 
     let merged = shell_common::merged_contexts(&core.manager).await;
     respond(Ok(ImportKubeconfigResult {
@@ -275,6 +281,15 @@ pub async fn remove_imported_context(
             core.manager.reset().await;
         }
     }
+    // A stored file must not outlive every context that came from it.
+    let remaining: std::collections::HashSet<String> = core
+        .manager
+        .imports()
+        .await
+        .into_values()
+        .map(|i| i.path)
+        .collect();
+    web_imports::prune_to_filenames(&core.data_dir, &remaining);
     let contexts = shell_common::merged_contexts(&core.manager).await;
     respond(Ok(RemoveImportedContextResult { contexts }))
 }
