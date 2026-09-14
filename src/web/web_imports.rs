@@ -47,8 +47,14 @@ fn save_all(data_dir: &Path, entries: &[WebImportEntry]) {
     }
     let body = k7s_deps::serde_json::to_string_pretty(entries).unwrap_or_default();
     if std::fs::write(&path, body).is_ok() {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+        // 0600 — the store carries client private keys. Unix only: the
+        // Windows build (desktop CI compiles the web feature too) has no
+        // unix permissions module.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+        }
     }
 }
 
@@ -161,6 +167,7 @@ users:
     }
 
     #[test]
+    #[cfg(unix)]
     fn store_file_is_private_0600() {
         let dir = tmp_dir("mode");
         upsert(&dir, "secret.yaml", "s");
