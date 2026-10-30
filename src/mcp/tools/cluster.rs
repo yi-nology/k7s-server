@@ -66,7 +66,7 @@ pub(crate) async fn connect(
         .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
     // MCP has no watchers — just record the connection.
-    manager
+    let connection_epoch = manager
         .set_connected(
             cr.client,
             k7s_core::kube::manager::ConnectionInfo {
@@ -83,6 +83,7 @@ pub(crate) async fn connect(
         cluster_name: context,
         server: cr.server,
         version: cr.version,
+        connection_epoch,
     };
     json_result(&info)
 }
