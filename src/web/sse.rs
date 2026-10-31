@@ -14,13 +14,14 @@ use std::convert::Infallible;
 
 use k7s_core::core::events::WebEvent;
 
-use super::state::WebState;
+use super::state::{SessionToken, WebState};
 
-/// `GET /events` — open an SSE stream and forward every emit.
+/// `GET /events` — open an SSE stream and forward this connection's emits.
 pub async fn events_handler(
     State(state): State<WebState>,
+    session: axum::extract::Extension<SessionToken>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    let mut rx = state.subscribe_sse();
+    let mut rx = state.session_for(&session).event_tx.subscribe();
 
     let stream = k7s_deps::async_stream::stream! {
         loop {

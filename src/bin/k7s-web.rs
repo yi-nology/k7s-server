@@ -96,9 +96,10 @@ async fn main() -> std::io::Result<()> {
 
     let state = WebState::new(data_dir.clone(), addr).with_tls_enabled(tls.is_some());
 
-    // Web imports live in the manager only, so without this every restart
-    // wipes them. Re-register whatever was persisted under the data dir.
-    let restored = k7s_server::web::web_imports::restore(&data_dir, &state.core.manager).await;
+    // Imports live in the manager only; re-register the persisted ones for the
+    // shared service connection (password sessions restore their own).
+    let restored =
+        k7s_server::web::web_imports::restore(&data_dir, &state.service.core.manager).await;
     if restored > 0 {
         k7s_deps::tracing::info!("restored {restored} imported kubeconfig context(s)");
     }
@@ -106,9 +107,14 @@ async fn main() -> std::io::Result<()> {
     // Process-wide audit log target — before any command can fire.
     k7s_core::core::audit::set_dir(data_dir.clone());
     // Scheduled AI tasks (ai_cron_*). Headless: web-mode ReadOnly + approvals
-    // auto-denied, so unattended runs can never mutate the cluster.
-    k7s_core::ai::cron::spawn_configured_runner(data_dir.clone(), state.core.manager.clone(), true)
-        .await;
+    // auto-denied, so unattended runs can never mutate the cluster. Cron has
+    // no login, so it runs on the shared service connection.
+    k7s_core::ai::cron::spawn_configured_runner(
+        data_dir.clone(),
+        state.service.core.manager.clone(),
+        true,
+    )
+    .await;
 
     // ── Startup banner ──────────────────────────────────────────────
     let version = env!("CARGO_PKG_VERSION");

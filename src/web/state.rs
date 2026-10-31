@@ -1,27 +1,49 @@
 //! Web state — the shared bits the axum routes close over.
 //!
-//! The Tauri shell stores the same data in `k7s_core::core::CoreState` (via
-//! `app.manage`). Here we wrap it with the SSE receiver, which only the
-//! web shell has — the Tauri shell never serves SSE.
+//! Every password login gets its own cluster connection (its own
+//! `ClientManager` + event sink), so one session's `connect` can't re-point
+//! another's writes. Requests without a session cookie (bearer-token API
+//! clients, cron) share the "service" connection.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use k7s_core::core::events::{WebEvent, WebEventReceiver};
+use k7s_core::core::events::WebEvent;
 use k7s_core::core::CoreState;
 use k7s_core::kube::ClientManager;
+
+/// The session token a request was authenticated with, inserted by
+/// `require_token`. `None` = bearer-token request (shared service connection).
+#[derive(Clone)]
+pub struct SessionToken(pub Option<String>);
+
+/// One connection: a manager (with its sink) plus the broadcast that feeds its
+/// SSE stream.
+pub struct SessionCtx {
+    pub core: Arc<CoreState>,
+    pub event_tx: k7s_deps::tokio::sync::broadcast::Sender<WebEvent>,
+}
+
+impl SessionCtx {
+    fn new(data_dir: std::path::PathBuf) -> Self {
+        // `web_sink` hands back the sink (the manager takes it) plus a seed
+        // receiver; a second call yields the sender we keep for SSE.
+        let (sink, _seed_rx) = k7s_core::core::events::web_sink(1024);
+        let manager = Arc::new(ClientManager::new(sink));
+        let core = CoreState::new(manager, data_dir);
+        let event_tx = k7s_core::core::events::web_sink_sender(&core);
+        Self { core, event_tx }
+    }
+}
 
 /// Everything an axum handler needs. Cheap to clone (`Arc` deref + enum).
 #[derive(Clone)]
 pub struct WebState {
-    /// The shared `core::CoreState` — manager (which carries the sink),
-    /// data dir for prefs.
-    pub core: Arc<CoreState>,
-    /// Sender half of the broadcast the `WebEventSink` writes to. We hold a
-    /// clone so the broadcast isn't dropped (it auto-closes with no
-    /// receivers); every SSE connection calls [`subscribe_sse`] for its own
-    /// receiver.
-    pub event_tx: k7s_deps::tokio::sync::broadcast::Sender<WebEvent>,
+    /// Shared connection: bearer-token API clients, cron, and the fallback for
+    /// requests without a session cookie.
+    pub service: Arc<SessionCtx>,
+    /// One connection per password login, keyed by the `k7s_session` cookie.
+    sessions: Arc<Mutex<HashMap<String, Arc<SessionCtx>>>>,
     /// Per-run event store for polling. Maps run_id → list of events.
     pub ai_runs: Arc<Mutex<HashMap<String, Vec<k7s_deps::serde_json::Value>>>>,
     /// Per-run pending write-tool approvals: call_id → approval sender.
@@ -48,8 +70,7 @@ pub struct WebState {
     /// clone its own copy and sessions issued by handlers would be invisible
     /// to `require_token`.
     pub password_auth: Arc<Mutex<super::auth_password::PasswordAuth>>,
-    /// Data dir, kept next to `core` for the password-file path. The auth
-    /// handlers persist the argon2 hash to `<data_dir>/web-password`.
+    /// Data dir for prefs, the password file and `web-imports.json`.
     pub data_dir: std::path::PathBuf,
     /// The shared command registry — the same table the Tauri shells use.
     /// `POST /api/invoke/{cmd}` dispatches through it for every non-AI
@@ -58,38 +79,23 @@ pub struct WebState {
 }
 
 impl WebState {
-    /// Build a fresh web state. The sink the manager gets and the SSE
-    /// receivers come from the same broadcast — one emit reaches every
-    /// connected client.
+    /// Build a fresh web state.
     ///
     /// `addr` is the bind address — used to set `is_loopback`, which controls
     /// whether `GET /api/web-token` is mounted (loopback only).
     pub fn new(data_dir: std::path::PathBuf, addr: std::net::SocketAddr) -> Self {
-        // The trick: `web_sink` returns both an `EventSink` (which the manager
-        // takes) and a *seed* `broadcast::Receiver`. We need a
-        // `broadcast::Sender` to keep ourselves, so we go through
-        // `web_sink` twice — once to build the sink, once to get a sender to
-        // keep. Both wrap the same underlying broadcast.
-        let (sink, _seed_rx) = k7s_core::core::events::web_sink(1024);
-        let manager = Arc::new(ClientManager::new(sink));
-        let core = CoreState::new(manager, data_dir);
-
-        // Grab a sender to keep. `subscribe_sse` will hand out fresh receivers
-        // on it for every new SSE connection.
-        let event_tx = k7s_core::core::events::web_sink_sender(&core);
-
-        let web_token = Arc::new(super::auth::resolve_token(&core.data_dir));
+        let service = Arc::new(SessionCtx::new(data_dir.clone()));
+        let web_token = Arc::new(super::auth::resolve_token(&data_dir));
         let is_loopback = addr.ip().is_loopback();
         let password_auth = Arc::new(Mutex::new(super::auth_password::PasswordAuth::load(
-            &core.data_dir,
+            &data_dir,
         )));
-        let data_dir = core.data_dir.clone();
         let registry = std::sync::Arc::new(k7s_commands::registry::build_registry());
 
         Self {
             registry,
-            core,
-            event_tx,
+            service,
+            sessions: Arc::new(Mutex::new(HashMap::new())),
             ai_runs: Arc::new(Mutex::new(HashMap::new())),
             pending_approvals: Arc::new(Mutex::new(HashMap::new())),
             web_token,
@@ -108,17 +114,104 @@ impl WebState {
         self
     }
 
-    /// A fresh subscriber for a new SSE connection.
-    pub fn subscribe_sse(&self) -> WebEventReceiver {
-        self.event_tx.subscribe()
+    /// The connection a request should use: its login's own, else the shared one.
+    pub fn session_for(&self, session: &SessionToken) -> Arc<SessionCtx> {
+        let Some(token) = session.0.clone() else {
+            return self.service.clone();
+        };
+        // Hold the lock across creation (sync and cheap) so two concurrent
+        // first requests can't build two connections for one session.
+        let mut map = self.sessions.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(ctx) = map.get(&token) {
+            return ctx.clone();
+        }
+        let ctx = Arc::new(SessionCtx::new(self.data_dir.clone()));
+        map.insert(token, ctx.clone());
+        drop(map);
+
+        // Imported kubeconfigs live on disk; seed this connection from them.
+        let manager = ctx.core.manager.clone();
+        let dir = self.data_dir.clone();
+        k7s_deps::tokio::spawn(async move {
+            let n = super::web_imports::restore(&dir, &manager).await;
+            if n > 0 {
+                k7s_deps::tracing::info!("session restored {n} imported kubeconfig context(s)");
+            }
+        });
+        ctx
     }
 
-    /// Emit an event to all connected SSE clients. Used by the AI chat handler
-    /// to push `ai_event` frames.
-    pub fn emit_event(&self, name: impl Into<String>, data: k7s_deps::serde_json::Value) {
-        let _ = self.event_tx.send(WebEvent {
-            name: name.into(),
-            data,
-        });
+    /// Tear down a login's connection (logout).
+    pub fn drop_session(&self, token: &str) {
+        let ctx = self
+            .sessions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(token);
+        if let Some(ctx) = ctx {
+            k7s_deps::tokio::spawn(async move { ctx.core.manager.reset().await });
+        }
+    }
+
+    /// Drop connections whose login expired. Called on login so an idle-expired
+    /// session can't pin its watchers forever.
+    pub fn sweep_sessions(&self) {
+        let expired = self
+            .password_auth
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .forget_expired();
+        if expired.is_empty() {
+            return;
+        }
+        let mut map = self.sessions.lock().unwrap_or_else(|e| e.into_inner());
+        for token in expired {
+            if let Some(ctx) = map.remove(&token) {
+                k7s_deps::tokio::spawn(async move { ctx.core.manager.reset().await });
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn state() -> WebState {
+        let dir = std::env::temp_dir().join(format!(
+            "k7s-web-session-test-{}",
+            k7s_deps::uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        WebState::new(dir, "127.0.0.1:0".parse().unwrap())
+    }
+
+    #[k7s_deps::tokio::test]
+    async fn logins_get_separate_connections() {
+        let st = state();
+        let a = st.session_for(&SessionToken(Some("a".into())));
+        let b = st.session_for(&SessionToken(Some("b".into())));
+        assert!(
+            !Arc::ptr_eq(&a.core, &b.core),
+            "two logins share one connection"
+        );
+        // Same login → same connection; no cookie → the shared service one.
+        assert!(Arc::ptr_eq(
+            &a.core,
+            &st.session_for(&SessionToken(Some("a".into()))).core
+        ));
+        assert!(Arc::ptr_eq(
+            &st.session_for(&SessionToken(None)).core,
+            &st.service.core
+        ));
+    }
+
+    #[k7s_deps::tokio::test]
+    async fn logout_drops_the_connection() {
+        let st = state();
+        let before = st.session_for(&SessionToken(Some("gone".into())));
+        st.drop_session("gone");
+        let after = st.session_for(&SessionToken(Some("gone".into())));
+        assert!(!Arc::ptr_eq(&before.core, &after.core));
     }
 }
