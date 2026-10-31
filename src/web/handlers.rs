@@ -27,7 +27,7 @@ use k7s_core::kube::{
     manager::ImportedContext,
 };
 
-use super::state::WebState;
+use super::state::{SessionToken, WebState};
 use super::types::*;
 use super::web_imports;
 
@@ -48,15 +48,19 @@ pub async fn default_kubeconfig_path() -> axum::response::Response {
 // status — what the connection banner reads on every poll.
 // ---------------------------------------------------------------------------
 
-pub async fn status(State(state): State<WebState>) -> axum::response::Response {
-    let info = state.core.manager.connection_info().await;
+pub async fn status(
+    State(state): State<WebState>,
+    session: axum::extract::Extension<SessionToken>,
+) -> axum::response::Response {
+    let core = state.session_for(&session).core.clone();
+    let info = core.manager.connection_info().await;
     // `connected` is the *intersection* of "client is live" and "info is
     // populated". Both halves are set/cleared atomically with the same lock
     // in `set_connected` / `reset`, so in practice they're in lockstep —
     // but the intersection makes the invariant explicit: a half-state
     // (e.g. client leaked through `reset` due to a future refactor) would
     // surface as `connected: false` here rather than a phantom banner.
-    let client_alive = state.core.manager.client().await.is_some();
+    let client_alive = core.manager.client().await.is_some();
     let dto = StatusDto {
         connected: client_alive && info.is_some(),
         context: info.as_ref().map(|i| i.context.clone()),
@@ -65,7 +69,7 @@ pub async fn status(State(state): State<WebState>) -> axum::response::Response {
         watcher_count: if client_alive {
             // Reuse the read lock the client check just held. Cheap and
             // avoids a second write-side acquire.
-            state.core.manager.watcher_count().await
+            core.manager.watcher_count().await
         } else {
             0
         },
@@ -77,20 +81,20 @@ pub async fn status(State(state): State<WebState>) -> axum::response::Response {
 // load_prefs / save_prefs
 // ---------------------------------------------------------------------------
 
-/// `POST /invoke/load_prefs` — read the prefs file under `state.core.data_dir`.
+/// `POST /invoke/load_prefs` — read the prefs file under `state.data_dir`.
 pub async fn load_prefs(State(state): State<WebState>) -> axum::response::Response {
-    let path = state.core.data_dir.join("prefs.json");
+    let path = state.data_dir.join("prefs.json");
     let text = std::fs::read_to_string(&path).ok();
     let prefs: Option<Prefs> = text.and_then(|t| k7s_deps::serde_json::from_str(&t).ok());
     respond(Ok(prefs))
 }
 
-/// `POST /invoke/save_prefs` — write the prefs file under `state.core.data_dir`.
+/// `POST /invoke/save_prefs` — write the prefs file under `state.data_dir`.
 pub async fn save_prefs(
     State(state): State<WebState>,
     Json(args): Json<SavePrefsArgs>,
 ) -> axum::response::Response {
-    respond(prefs::save_prefs(&state.core.data_dir, &args.prefs))
+    respond(prefs::save_prefs(&state.data_dir, &args.prefs))
 }
 
 // ---------------------------------------------------------------------------
@@ -102,9 +106,10 @@ pub async fn save_prefs(
 /// manager, and return the merged switcher list.
 pub async fn import_kubeconfig_content(
     State(state): State<WebState>,
+    session: axum::extract::Extension<SessionToken>,
     Json(args): Json<ImportKubeconfigContentArgs>,
 ) -> axum::response::Response {
-    let core = state.core.clone();
+    let core = state.session_for(&session).core.clone();
     // Phase 1: parse. The serde_yaml error already carries line/column —
     // surface it verbatim so the UI can show exactly where the YAML breaks.
     let kc = match Kubeconfig::from_yaml(&args.contents) {
@@ -267,9 +272,10 @@ fn user_auth_kind(user: Option<&k7s_deps::kube::config::AuthInfo>) -> String {
 /// A live connection to the removed context is torn down with it.
 pub async fn remove_imported_context(
     State(state): State<WebState>,
+    session: axum::extract::Extension<SessionToken>,
     Json(args): Json<RemoveImportedContextArgs>,
 ) -> axum::response::Response {
-    let core = state.core.clone();
+    let core = state.session_for(&session).core.clone();
     let Some(_removed) = core.manager.remove_import(&args.context).await else {
         return respond::<RemoveImportedContextResult>(Err(AppError::Other(format!(
             "{} is not an imported context — only imported ones can be removed",
@@ -317,7 +323,7 @@ pub async fn sbom_generate_image(
         .unwrap_or(k7s_core::kube::security::sbom::SbomFormat::CycloneDx);
 
     let engine = {
-        let p = prefs::read_prefs(&state.core.data_dir);
+        let p = prefs::read_prefs(&state.data_dir);
         k7s_core::kube::security::sbom::SbomEngine::with_prefs(
             p.scanner_trivy_path.as_deref(),
             p.scanner_grype_path.as_deref(),
@@ -326,8 +332,7 @@ pub async fn sbom_generate_image(
     };
     let result: AppResult<_> = async {
         let sbom = engine.generate_with_vulns(&image_ref, &format).await?;
-        let storage =
-            k7s_core::kube::security::sbom_storage::SbomStorage::new(&state.core.data_dir);
+        let storage = k7s_core::kube::security::sbom_storage::SbomStorage::new(&state.data_dir);
         storage.save(&sbom)?;
         Ok(sbom)
     }
@@ -337,7 +342,7 @@ pub async fn sbom_generate_image(
 
 /// `GET /api/sbom/history` — List SBOM scan history.
 pub async fn sbom_list_history(State(state): State<WebState>) -> axum::response::Response {
-    let storage = k7s_core::kube::security::sbom_storage::SbomStorage::new(&state.core.data_dir);
+    let storage = k7s_core::kube::security::sbom_storage::SbomStorage::new(&state.data_dir);
     respond(storage.list())
 }
 
@@ -346,7 +351,7 @@ pub async fn sbom_get(
     State(state): State<WebState>,
     Path(id): Path<String>,
 ) -> axum::response::Response {
-    let storage = k7s_core::kube::security::sbom_storage::SbomStorage::new(&state.core.data_dir);
+    let storage = k7s_core::kube::security::sbom_storage::SbomStorage::new(&state.data_dir);
     respond(storage.load(&id))
 }
 
@@ -378,6 +383,7 @@ pub async fn web_token(State(state): State<WebState>) -> axum::response::Respons
 pub async fn invoke_registry(
     axum::extract::Path(cmd): axum::extract::Path<String>,
     axum::extract::State(state): axum::extract::State<WebState>,
+    session: axum::extract::Extension<SessionToken>,
     body: axum::body::Bytes,
 ) -> axum::response::Response {
     let Some(handler) = state.registry.get(&cmd) else {
@@ -397,7 +403,7 @@ pub async fn invoke_registry(
             }
         }
     };
-    match handler(state.core.clone(), args).await {
+    match handler(state.session_for(&session).core.clone(), args).await {
         Ok(v) => respond::<k7s_deps::serde_json::Value>(Ok(v)),
         Err(e) => respond::<k7s_deps::serde_json::Value>(Err(e)),
     }
@@ -436,7 +442,8 @@ pub async fn local_chart_upload(
     axum::extract::State(state): axum::extract::State<WebState>,
     axum::Json(args): axum::Json<LocalChartUploadArgs>,
 ) -> axum::response::Response {
-    let core = state.core.clone();
+    // The local chart library lives on shared disk; no session connection needed.
+    let core = state.service.core.clone();
     let result: AppResult<k7s_core::kube::helm::local::LocalChartEntry> =
         k7s_commands::commands::helm::local_chart_import_content_impl(
             core,

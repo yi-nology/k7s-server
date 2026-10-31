@@ -124,6 +124,23 @@ impl PasswordAuth {
         }
     }
 
+    /// Remove and return tokens whose session expired (no renewal).
+    pub fn forget_expired(&self) -> Vec<String> {
+        let Ok(mut s) = self.sessions.lock() else {
+            return Vec::new();
+        };
+        let now = Instant::now();
+        let expired: Vec<String> = s
+            .iter()
+            .filter(|(_, exp)| **exp <= now)
+            .map(|(t, _)| t.clone())
+            .collect();
+        for t in &expired {
+            s.remove(t);
+        }
+        expired
+    }
+
     /// Serialize the session cookie header value.
     ///
     /// `secure` (set for non-loopback binds) adds the `Secure` attribute so
@@ -290,6 +307,7 @@ pub async fn auth_setup(
     }
     let token = guard.issue_session();
     drop(guard);
+    state.sweep_sessions();
     (
         [(
             SET_COOKIE,
@@ -366,6 +384,7 @@ pub async fn auth_login(
     let token = guard.issue_session();
     drop(guard);
     clear_login_failures();
+    state.sweep_sessions();
     (
         [(
             SET_COOKIE,
@@ -403,6 +422,7 @@ pub async fn auth_logout(
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .drop_session(&t);
+        state.drop_session(&t);
     }
     (
         [(

@@ -28,7 +28,7 @@ use axum::Json;
 use k7s_deps::http::{Request, StatusCode};
 use k7s_deps::serde_json::json;
 
-use super::state::WebState;
+use super::state::{SessionToken, WebState};
 
 /// File name (under `data_dir`) holding the auto-generated web token.
 const TOKEN_FILE: &str = "web-token";
@@ -100,7 +100,7 @@ pub(super) fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 /// loopback-only token-publish route) are exempted by path.
 pub async fn require_token(
     State(state): State<WebState>,
-    req: Request<Body>,
+    mut req: Request<Body>,
     next: Next,
 ) -> Response {
     let path = req.uri().path();
@@ -133,15 +133,16 @@ pub async fn require_token(
                 .trim()
         });
 
-    let ok = match provided {
+    let bearer_ok = match provided {
         Some(p) => constant_time_eq(p.as_bytes(), expected),
         None => false,
     };
-    if ok {
-        next.run(req).await
-    } else if cookie_session(&req, &state).is_some() {
-        // Session cookie fallback: password login gate (P1). Loopback without
-        // a configured password keeps the original token-only behavior.
+    // A valid session cookie selects that login's own connection even when the
+    // request also carries the bearer token (the loopback SPA sends both);
+    // requests without one fall back to the shared service connection.
+    let cookie = cookie_session(&req, &state);
+    if bearer_ok || cookie.is_some() {
+        req.extensions_mut().insert(SessionToken(cookie));
         next.run(req).await
     } else {
         (
@@ -152,9 +153,9 @@ pub async fn require_token(
     }
 }
 
-/// True when the request carries a live `k7s_session` cookie (sliding-renewal
-/// check lives in [`super::auth_password::PasswordAuth::check_session`]).
-fn cookie_session(req: &Request<Body>, state: &WebState) -> Option<()> {
+/// The live `k7s_session` cookie token, if any (sliding renewal lives in
+/// [`super::auth_password::PasswordAuth::check_session`]).
+fn cookie_session(req: &Request<Body>, state: &WebState) -> Option<String> {
     let raw = req
         .headers()
         .get(k7s_deps::http::header::COOKIE)?
@@ -171,7 +172,7 @@ fn cookie_session(req: &Request<Body>, state: &WebState) -> Option<()> {
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .check_session(token)
-        .then_some(())
+        .then(|| token.to_string())
 }
 
 #[cfg(test)]

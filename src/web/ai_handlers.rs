@@ -6,7 +6,7 @@
 
 use axum::{extract::State, Json};
 
-use super::state::WebState;
+use super::state::{SessionToken, WebState};
 use super::types::respond;
 
 // ---------------------------------------------------------------------------
@@ -15,7 +15,7 @@ use super::types::respond;
 
 /// POST /invoke/ai_get_config
 pub async fn ai_get_config_handler(State(state): State<WebState>) -> axum::response::Response {
-    let dir = state.core.data_dir.clone();
+    let dir = state.data_dir.clone();
     let result = match k7s_deps::tokio::time::timeout(
         std::time::Duration::from_secs(3),
         k7s_deps::tokio::task::spawn_blocking(move || k7s_core::ai::config::load(Some(&dir))),
@@ -33,8 +33,12 @@ pub async fn ai_get_config_handler(State(state): State<WebState>) -> axum::respo
 }
 
 /// POST /invoke/ai_get_context
-pub async fn ai_get_context_handler(State(state): State<WebState>) -> axum::response::Response {
+pub async fn ai_get_context_handler(
+    State(state): State<WebState>,
+    session: axum::extract::Extension<SessionToken>,
+) -> axum::response::Response {
     let ctx = state
+        .session_for(&session)
         .core
         .manager
         .connection_info()
@@ -46,7 +50,7 @@ pub async fn ai_get_context_handler(State(state): State<WebState>) -> axum::resp
 
 /// POST /invoke/ai_list_skills
 pub async fn ai_list_skills_handler(State(state): State<WebState>) -> axum::response::Response {
-    let reg = k7s_core::ai::skills::SkillRegistry::load(Some(&state.core.data_dir));
+    let reg = k7s_core::ai::skills::SkillRegistry::load(Some(&state.data_dir));
     let skills: Vec<k7s_core::ai::skills::Skill> = reg.list().into_iter().cloned().collect();
     respond(Ok(skills))
 }
@@ -60,7 +64,7 @@ pub async fn ai_memory_list_handler(
         .get("kubeContext")
         .and_then(|v| v.as_str())
         .unwrap_or("default");
-    let store = k7s_core::ai::memory::MemoryStore::open(&state.core.data_dir, kube_context);
+    let store = k7s_core::ai::memory::MemoryStore::open(&state.data_dir, kube_context);
     let entries: Vec<k7s_core::ai::memory::MemoryEntry> =
         store.list(None).into_iter().cloned().collect();
     respond(Ok(entries))
@@ -76,7 +80,7 @@ pub async fn ai_memory_search_handler(
         .and_then(|v| v.as_str())
         .unwrap_or("default");
     let query = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
-    let mut store = k7s_core::ai::memory::MemoryStore::open(&state.core.data_dir, kube_context);
+    let mut store = k7s_core::ai::memory::MemoryStore::open(&state.data_dir, kube_context);
     let results = store.search(query);
     respond(Ok(results))
 }
@@ -109,7 +113,7 @@ pub async fn ai_memory_add_handler(
         "knowledgeVault" => k7s_core::ai::memory::Tier::KnowledgeVault,
         _ => k7s_core::ai::memory::Tier::LongTerm,
     };
-    let mut store = k7s_core::ai::memory::MemoryStore::open(&state.core.data_dir, kube_context);
+    let mut store = k7s_core::ai::memory::MemoryStore::open(&state.data_dir, kube_context);
     store.add(
         tier,
         content,
@@ -121,7 +125,7 @@ pub async fn ai_memory_add_handler(
 
 /// POST /invoke/ai_cron_list
 pub async fn ai_cron_list_handler(State(state): State<WebState>) -> axum::response::Response {
-    let scheduler = k7s_core::ai::cron::CronScheduler::new(state.core.data_dir.clone());
+    let scheduler = k7s_core::ai::cron::CronScheduler::new(state.data_dir.clone());
     let tasks = scheduler.list().await;
     respond(Ok(tasks))
 }
@@ -130,7 +134,7 @@ pub async fn ai_cron_list_handler(State(state): State<WebState>) -> axum::respon
 pub async fn ai_evolution_strategies_handler(
     State(state): State<WebState>,
 ) -> axum::response::Response {
-    let store = k7s_core::ai::evolution::EvolutionStore::open(&state.core.data_dir);
+    let store = k7s_core::ai::evolution::EvolutionStore::open(&state.data_dir);
     let strategies: Vec<k7s_core::ai::evolution::Strategy> = store.list_strategies().to_vec();
     respond(Ok(strategies))
 }
@@ -144,7 +148,7 @@ pub async fn ai_memory_preferences_handler(
         .get("kubeContext")
         .and_then(|v| v.as_str())
         .unwrap_or("default");
-    let store = k7s_core::ai::memory::MemoryStore::open(&state.core.data_dir, kube_context);
+    let store = k7s_core::ai::memory::MemoryStore::open(&state.data_dir, kube_context);
     let prefs: Vec<k7s_core::ai::memory::UserPreference> = store.preferences().to_vec();
     respond(Ok(prefs))
 }
@@ -159,7 +163,7 @@ pub async fn ai_memory_delete_handler(
         .and_then(|v| v.as_str())
         .unwrap_or("default");
     let id = args.get("id").and_then(|v| v.as_str()).unwrap_or("");
-    let mut store = k7s_core::ai::memory::MemoryStore::open(&state.core.data_dir, kube_context);
+    let mut store = k7s_core::ai::memory::MemoryStore::open(&state.data_dir, kube_context);
     let deleted = store.delete(id);
     respond(Ok(k7s_deps::serde_json::json!({ "deleted": deleted })))
 }
@@ -180,7 +184,7 @@ pub async fn ai_memory_clear_handler(
         "knowledgeVault" => Some(k7s_core::ai::memory::Tier::KnowledgeVault),
         _ => None,
     });
-    let mut store = k7s_core::ai::memory::MemoryStore::open(&state.core.data_dir, kube_context);
+    let mut store = k7s_core::ai::memory::MemoryStore::open(&state.data_dir, kube_context);
     store.clear(tier);
     respond(Ok(k7s_deps::serde_json::json!({ "ok": true })))
 }
@@ -195,7 +199,7 @@ pub async fn ai_memory_search_vault_handler(
         .and_then(|v| v.as_str())
         .unwrap_or("default");
     let query = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
-    let mut store = k7s_core::ai::memory::MemoryStore::open(&state.core.data_dir, kube_context);
+    let mut store = k7s_core::ai::memory::MemoryStore::open(&state.data_dir, kube_context);
     let results = store.search_vault(query);
     respond(Ok(results))
 }
@@ -209,7 +213,7 @@ pub async fn ai_cron_add_handler(
         Ok(t) => t,
         Err(e) => return respond::<()>(Err(k7s_core::error::AppError::Other(e.to_string()))),
     };
-    let scheduler = k7s_core::ai::cron::CronScheduler::new(state.core.data_dir.clone());
+    let scheduler = k7s_core::ai::cron::CronScheduler::new(state.data_dir.clone());
     scheduler.add(task).await;
     respond(Ok(k7s_deps::serde_json::json!({ "ok": true })))
 }
@@ -220,7 +224,7 @@ pub async fn ai_cron_toggle_handler(
     Json(args): Json<k7s_deps::serde_json::Value>,
 ) -> axum::response::Response {
     let id = args.get("id").and_then(|v| v.as_str()).unwrap_or("");
-    let scheduler = k7s_core::ai::cron::CronScheduler::new(state.core.data_dir.clone());
+    let scheduler = k7s_core::ai::cron::CronScheduler::new(state.data_dir.clone());
     let toggled = scheduler.toggle(id).await;
     respond(Ok(k7s_deps::serde_json::json!({ "toggled": toggled })))
 }
@@ -231,7 +235,7 @@ pub async fn ai_cron_delete_handler(
     Json(args): Json<k7s_deps::serde_json::Value>,
 ) -> axum::response::Response {
     let id = args.get("id").and_then(|v| v.as_str()).unwrap_or("");
-    let scheduler = k7s_core::ai::cron::CronScheduler::new(state.core.data_dir.clone());
+    let scheduler = k7s_core::ai::cron::CronScheduler::new(state.data_dir.clone());
     let deleted = scheduler.delete(id).await;
     respond(Ok(k7s_deps::serde_json::json!({ "deleted": deleted })))
 }
@@ -259,7 +263,7 @@ pub async fn ai_save_config_handler(
                 ))))
             }
         };
-    let dir = state.core.data_dir.clone();
+    let dir = state.data_dir.clone();
     let result = match k7s_deps::tokio::task::spawn_blocking(move || {
         k7s_core::ai::config::save(Some(&dir), &config)
     })
@@ -282,7 +286,7 @@ pub async fn ai_save_api_key_handler(
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
-    let dir = state.core.data_dir.clone();
+    let dir = state.data_dir.clone();
     let result = match k7s_deps::tokio::task::spawn_blocking(move || {
         k7s_core::ai::config::save_api_key(Some(&dir), &api_key)
     })
@@ -298,7 +302,7 @@ pub async fn ai_save_api_key_handler(
 /// POST /invoke/ai_test_connection
 pub async fn ai_test_connection_handler(State(state): State<WebState>) -> axum::response::Response {
     use k7s_core::ai::llm::LlmClient;
-    let dir = state.core.data_dir.clone();
+    let dir = state.data_dir.clone();
     let view =
         match k7s_deps::tokio::task::spawn_blocking(move || k7s_core::ai::config::load(Some(&dir)))
             .await
@@ -312,7 +316,7 @@ pub async fn ai_test_connection_handler(State(state): State<WebState>) -> axum::
             }
         };
     let cfg = view.config;
-    let (base, model, key) = match k7s_core::ai::config::resolve(&cfg, Some(&state.core.data_dir)) {
+    let (base, model, key) = match k7s_core::ai::config::resolve(&cfg, Some(&state.data_dir)) {
         Ok(t) => t,
         Err(e) => return respond::<String>(Err(k7s_core::error::AppError::Other(e.to_string()))),
     };
@@ -401,8 +405,10 @@ impl k7s_core::ai::agent::EventSink for WebAiSink {
 /// events arrive via SSE on the `ai_event` channel.
 pub async fn ai_chat_handler(
     State(state): State<WebState>,
+    session: axum::extract::Extension<SessionToken>,
     Json(body): Json<k7s_deps::serde_json::Value>,
 ) -> axum::response::Response {
+    let conn = state.session_for(&session);
     // Parse request.
     let request: k7s_core::ai::agent::ChatRequest = match k7s_deps::serde_json::from_value(
         body.get("request")
@@ -418,7 +424,7 @@ pub async fn ai_chat_handler(
     };
 
     // Load config.
-    let dir = state.core.data_dir.clone();
+    let dir = state.data_dir.clone();
     let view =
         match k7s_deps::tokio::task::spawn_blocking(move || k7s_core::ai::config::load(Some(&dir)))
             .await
@@ -432,7 +438,7 @@ pub async fn ai_chat_handler(
             }
         };
     let cfg = view.config;
-    let data_dir = state.core.data_dir.clone();
+    let data_dir = state.data_dir.clone();
 
     // Resolve LLM provider (with Ollama fallback).
     let (base, model, key) = match k7s_core::ai::config::resolve(&cfg, Some(&data_dir)) {
@@ -474,12 +480,12 @@ pub async fn ai_chat_handler(
     let events_store = state.ai_runs.clone();
 
     let sink: std::sync::Arc<dyn k7s_core::ai::agent::EventSink> = std::sync::Arc::new(WebAiSink {
-        event_tx: state.event_tx.clone(),
+        event_tx: conn.event_tx.clone(),
         run_id: run_id.clone(),
         events_store: events_store.clone(),
         pending_approvals: state.pending_approvals.clone(),
     });
-    let manager = state.core.manager.clone();
+    let manager = conn.core.manager.clone();
     // SECURITY: web mode forces ReadOnly. Write tools are refused by the
     // permission gate regardless of the saved config (FullAuto /
     // ReadConfirmWrite). The approval channel exists (`await_approval` +
